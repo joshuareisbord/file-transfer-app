@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Work Transfer
+Comment=Transfer a file to another Ubuntu computer over SCP
+Exec=/opt/work-transfer/work-transfer
+Terminal=false
+Categories=Network;FileTransfer;
+

@@ -1,0 +1,33 @@
+[project]
+name = "work-transfer-app"
+version = "0.1.0"
+description = "Proof-of-concept GUI for transferring files between Ubuntu computers with SCP"
+requires-python = ">=3.12"
+dependencies = [
+    "asyncssh",
+]
+
+[project.scripts]
+work-transfer = "work_transfer_app.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "basedpyright",
+    "pyinstaller",
+    "pytest",
+    "ruff",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.basedpyright]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+
+[tool.uv]
+prerelease = "disallow"
