@@ -24,6 +24,9 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: exercises local infrastructure or external process boundaries",
+]
 
 [tool.basedpyright]
 pythonVersion = "3.12"

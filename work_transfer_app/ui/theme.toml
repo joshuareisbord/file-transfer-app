@@ -1,0 +1,45 @@
+[palette.primary]
+blue = [31, 59, 100]
+mojave = [231, 219, 196]
+
+[palette.secondary]
+black = [10, 10, 10]
+white = [250, 250, 250]
+
+[palette.accent]
+red = [188, 32, 38]
+green = [75, 81, 38]
+orange = [228, 89, 45]
+
+[roles]
+canvas = "primary.mojave"
+surface = "secondary.white"
+header = "primary.blue"
+header_text = "secondary.white"
+header_muted = "primary.mojave"
+border = "secondary.black"
+ink = "secondary.black"
+muted = "primary.blue"
+primary_action = "primary.blue"
+primary_action_text = "secondary.white"
+primary_action_active = "accent.orange"
+button_active = "primary.mojave"
+button_active_text = "secondary.black"
+danger = "accent.red"
+danger_active = "accent.red"
+danger_active_text = "secondary.white"
+notice = "accent.green"
+disabled = "primary.mojave"
+disabled_text = "primary.blue"
+selection = "primary.blue"
+selection_text = "secondary.white"
+tab_active = "accent.orange"
+tab_active_text = "secondary.black"
+progress = "accent.green"
+success = "accent.green"
+active_accent = "accent.orange"
+active_accent_text = "secondary.black"
+status_surface = "secondary.white"
+status_ink = "secondary.black"
+status_meta = "primary.blue"
+status_state = "accent.green"

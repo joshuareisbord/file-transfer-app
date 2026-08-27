@@ -46,5 +46,49 @@ RUN uv run pyinstaller \
 RUN /output/work-transfer --self-check
 RUN ./packaging/smoke-test.sh /output/work-transfer
 
+FROM ubuntu:latest AS demo-keygen
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update
+RUN apt-get install --yes --no-install-recommends openssh-client
+
+COPY --chmod=755 packaging/demo/keygen.sh /usr/local/bin/demo-keygen
+
+ENTRYPOINT ["/usr/local/bin/demo-keygen"]
+
+FROM ubuntu:latest AS demo
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update
+RUN apt-get install --yes --no-install-recommends \
+    fonts-dejavu-core \
+    libxcb1 \
+    novnc \
+    openbox \
+    openssh-client \
+    openssh-server \
+    tini \
+    util-linux \
+    websockify \
+    x11-utils \
+    x11vnc \
+    xvfb
+
+RUN useradd --create-home --shell /bin/bash demo
+# DEMO ONLY: password login is disabled in sshd; clearing the password hash keeps
+# the account usable with the ephemeral public key on minimal Ubuntu images.
+RUN passwd --delete demo
+RUN install -d -m 700 -o demo -g demo /home/demo/.ssh
+
+COPY --from=builder /output/work-transfer /usr/local/bin/work-transfer
+COPY --chmod=755 packaging/demo/desktop.sh /usr/local/bin/demo-desktop
+COPY --chmod=755 packaging/demo/side-entrypoint.sh /usr/local/bin/demo-side-entrypoint
+
+EXPOSE 22 6080
+
+ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/usr/local/bin/demo-side-entrypoint"]
+
 FROM scratch AS artifact
 COPY --from=builder /output/work-transfer /work-transfer

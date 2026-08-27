@@ -4,6 +4,55 @@ Work Transfer is a light-mode Ubuntu desktop application for sending files to
 another Ubuntu computer over SCP. It supports a tested session connection, a
 sequential transfer queue, live byte progress and ETA, and safe cancellation.
 
+## Interactive two-computer Docker demo
+
+The demo runs two isolated Ubuntu computers. Each side has the real Work
+Transfer GUI, its own OpenSSH receiver, and a browser-accessible desktop. On
+Windows, Docker Desktop must be using Linux containers; no local Python, SSH,
+or X server installation is required.
+
+From PowerShell, Command Prompt, or another terminal in the repository, run:
+
+```bash
+docker compose --file compose.demo.yaml up --build
+```
+
+Open both desktops after the services are ready:
+
+- Computer A: <http://127.0.0.1:6081/vnc.html?autoconnect=1&resize=scale>
+- Computer B: <http://127.0.0.1:6082/vnc.html?autoconnect=1&resize=scale>
+
+To send from Computer A to Computer B, use these values in A's **Connection**
+tab:
+
+```text
+Host or IP address: computer-b
+Username: demo
+SSH port: 22
+Private key: /home/demo/.ssh/demo_key
+```
+
+Run **Test connection**, then select the sample file under
+`/home/demo/outgoing` and use `/home/demo/incoming` as the remote destination.
+Reverse the host names to send from B to A. The demo provisions keys,
+`known_hosts`, writable directories, and sample files automatically.
+
+Stop the demo with `Ctrl+C`, then remove its containers:
+
+```bash
+docker compose --file compose.demo.yaml down
+```
+
+To also discard the demo-only SSH keys and reset all state:
+
+```bash
+docker compose --file compose.demo.yaml down --volumes
+```
+
+The browser desktops intentionally have no password and are published only on
+the Windows computer's loopback interface. This environment is for local
+demonstration only and must not be exposed as a production service.
+
 ## Build the Ubuntu executable
 
 The build requires Git and a running Docker engine. Python and the application
@@ -107,6 +156,12 @@ requires for strict host verification.
 All displayed text comes from JSON catalogs under
 `work_transfer_app/localization/languages/`. Edit or add a catalog and rebuild
 the executable to change UI text.
+
+All interface colors come from `work_transfer_app/ui/theme.toml`. Palette
+values are RGB triples, and semantic roles in the same file select which
+palette color is used for each surface, control, status, and interaction state.
+Edit the TOML file and rebuild the executable to change the color system; no
+Python changes are required.
 
 ## Development
 

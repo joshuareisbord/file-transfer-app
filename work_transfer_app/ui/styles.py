@@ -5,186 +5,229 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import font, ttk
 
-_CANVAS = "#EEF1F2"
-_SURFACE = "#FFFFFF"
-_HEADER = "#DDE3E5"
-_BORDER = "#AEB8BC"
-_INK = "#17252C"
-_MUTED = "#526168"
-_TEAL = "#006E69"
-_TEAL_DARK = "#005954"
-_ERROR = "#9C2F2A"
-_NOTICE = "#765B00"
-_DISABLED = "#7D898E"
+from work_transfer_app.ui.theme import ColorTheme, load_theme
 
 
-def configure_styles(root: tk.Tk) -> None:
+def configure_styles(root: tk.Tk, theme: ColorTheme | None = None) -> None:
     """Configure a square, high-contrast visual system for the application."""
 
-    root.configure(background=_CANVAS)
+    active_theme = theme if theme is not None else load_theme()
+    color = active_theme.color
+
+    root.configure(background=color("canvas"))
     _configure_fonts(root)
     style = ttk.Style(root)
     if "clam" in style.theme_names():
         style.theme_use("clam")
 
-    style.configure("TFrame", background=_CANVAS)
-    style.configure("Body.TFrame", background=_CANVAS)
+    style.configure("TFrame", background=color("canvas"))
+    style.configure("Body.TFrame", background=color("canvas"))
     style.configure(
         "Panel.TFrame",
-        background=_SURFACE,
-        bordercolor=_BORDER,
+        background=color("surface"),
+        bordercolor=color("border"),
         borderwidth=1,
         relief="solid",
     )
-    style.configure("PanelContent.TFrame", background=_SURFACE, borderwidth=0)
+    style.configure("PanelContent.TFrame", background=color("surface"), borderwidth=0)
     style.configure(
         "Header.TFrame",
-        background=_HEADER,
-        bordercolor=_BORDER,
+        background=color("header"),
+        bordercolor=color("border"),
         borderwidth=1,
         relief="solid",
     )
     style.configure(
         "StatusTray.TFrame",
-        background=_HEADER,
-        bordercolor=_BORDER,
+        background=color("status_surface"),
+        bordercolor=color("border"),
         borderwidth=1,
         relief="solid",
     )
-    style.configure("StatusContent.TFrame", background=_HEADER, borderwidth=0)
+    style.configure(
+        "StatusContent.TFrame", background=color("status_surface"), borderwidth=0
+    )
 
-    style.configure("TLabel", background=_SURFACE, foreground=_INK)
+    style.configure("TLabel", background=color("surface"), foreground=color("ink"))
     style.configure(
         "AppTitle.TLabel",
-        background=_HEADER,
-        foreground=_INK,
+        background=color("header"),
+        foreground=color("header_text"),
         font=("DejaVu Sans", 16, "bold"),
     )
-    style.configure("AppSubtitle.TLabel", background=_HEADER, foreground=_MUTED)
+    style.configure(
+        "AppSubtitle.TLabel",
+        background=color("header"),
+        foreground=color("header_muted"),
+    )
     style.configure(
         "SectionTitle.TLabel",
-        background=_CANVAS,
-        foreground=_INK,
+        background=color("canvas"),
+        foreground=color("ink"),
         font=("DejaVu Sans", 15, "bold"),
     )
-    style.configure("Muted.TLabel", background=_CANVAS, foreground=_MUTED)
+    style.configure(
+        "Muted.TLabel", background=color("canvas"), foreground=color("muted")
+    )
     style.configure(
         "PanelHeading.TLabel",
-        background=_SURFACE,
-        foreground=_INK,
+        background=color("surface"),
+        foreground=color("ink"),
         font=("DejaVu Sans", 11, "bold"),
     )
-    style.configure("MutedPanel.TLabel", background=_SURFACE, foreground=_MUTED)
-    style.configure("Error.TLabel", background=_SURFACE, foreground=_ERROR)
-    style.configure("Notice.TLabel", background=_SURFACE, foreground=_NOTICE)
-    style.configure("Data.TLabel", background=_SURFACE, foreground=_INK)
-    style.configure("InlineStatus.TLabel", background=_SURFACE, foreground=_MUTED)
+    style.configure(
+        "MutedPanel.TLabel",
+        background=color("surface"),
+        foreground=color("muted"),
+    )
+    style.configure(
+        "Error.TLabel", background=color("surface"), foreground=color("danger")
+    )
+    style.configure(
+        "Notice.TLabel", background=color("surface"), foreground=color("notice")
+    )
+    style.configure("Data.TLabel", background=color("surface"), foreground=color("ink"))
+    style.configure(
+        "InlineStatus.TLabel",
+        background=color("surface"),
+        foreground=color("muted"),
+    )
     style.configure(
         "StatusFile.TLabel",
-        background=_HEADER,
-        foreground=_INK,
+        background=color("status_surface"),
+        foreground=color("status_ink"),
         font=("DejaVu Sans", 10, "bold"),
     )
-    style.configure("StatusState.TLabel", background=_HEADER, foreground=_TEAL_DARK)
-    style.configure("StatusMeta.TLabel", background=_HEADER, foreground=_MUTED)
+    style.configure(
+        "StatusState.TLabel",
+        background=color("status_surface"),
+        foreground=color("status_state"),
+    )
+    style.configure(
+        "StatusMeta.TLabel",
+        background=color("status_surface"),
+        foreground=color("status_meta"),
+    )
 
     style.configure(
         "TButton",
-        background=_SURFACE,
-        foreground=_INK,
-        bordercolor=_BORDER,
+        background=color("surface"),
+        foreground=color("ink"),
+        bordercolor=color("border"),
         borderwidth=1,
         relief="solid",
         padding=(12, 7),
     )
     style.map(
         "TButton",
-        background=[("active", _HEADER), ("disabled", _CANVAS)],
-        foreground=[("disabled", _DISABLED)],
+        background=[
+            ("active", color("button_active")),
+            ("disabled", color("disabled")),
+        ],
+        foreground=[
+            ("active", color("button_active_text")),
+            ("disabled", color("disabled_text")),
+        ],
     )
     style.configure(
         "Primary.TButton",
-        background=_TEAL,
-        foreground=_SURFACE,
-        bordercolor=_TEAL_DARK,
+        background=color("primary_action"),
+        foreground=color("primary_action_text"),
+        bordercolor=color("primary_action"),
     )
     style.map(
         "Primary.TButton",
-        background=[("active", _TEAL_DARK), ("disabled", _DISABLED)],
-        foreground=[("disabled", _SURFACE)],
+        background=[
+            ("active", color("primary_action_active")),
+            ("disabled", color("disabled")),
+        ],
+        foreground=[
+            ("active", color("active_accent_text")),
+            ("disabled", color("disabled_text")),
+        ],
     )
     style.configure(
         "Danger.TButton",
-        background=_SURFACE,
-        foreground=_ERROR,
-        bordercolor=_ERROR,
+        background=color("surface"),
+        foreground=color("danger"),
+        bordercolor=color("danger"),
     )
-    style.map("Danger.TButton", background=[("active", "#F8E8E7")])
+    style.map(
+        "Danger.TButton",
+        background=[("active", color("danger_active"))],
+        foreground=[("active", color("danger_active_text"))],
+    )
 
     style.configure(
         "TEntry",
-        fieldbackground=_SURFACE,
-        foreground=_INK,
-        bordercolor=_BORDER,
-        lightcolor=_BORDER,
-        darkcolor=_BORDER,
+        fieldbackground=color("surface"),
+        foreground=color("ink"),
+        bordercolor=color("border"),
+        lightcolor=color("border"),
+        darkcolor=color("border"),
         borderwidth=1,
         padding=7,
     )
     style.configure(
         "TCombobox",
-        fieldbackground=_SURFACE,
-        foreground=_INK,
-        bordercolor=_BORDER,
+        fieldbackground=color("surface"),
+        foreground=color("ink"),
+        bordercolor=color("border"),
         padding=6,
     )
     style.configure(
         "Treeview",
-        background=_SURFACE,
-        fieldbackground=_SURFACE,
-        foreground=_INK,
-        bordercolor=_BORDER,
+        background=color("surface"),
+        fieldbackground=color("surface"),
+        foreground=color("ink"),
+        bordercolor=color("border"),
         borderwidth=1,
         relief="solid",
         rowheight=30,
     )
     style.configure(
         "Treeview.Heading",
-        background=_HEADER,
-        foreground=_INK,
-        bordercolor=_BORDER,
+        background=color("header"),
+        foreground=color("header_text"),
+        bordercolor=color("border"),
         relief="solid",
         font=("DejaVu Sans", 9, "bold"),
         padding=(8, 6),
     )
     style.map(
         "Treeview",
-        background=[("selected", _TEAL)],
-        foreground=[("selected", _SURFACE)],
+        background=[("selected", color("selection"))],
+        foreground=[("selected", color("selection_text"))],
     )
 
-    style.configure("TNotebook", background=_CANVAS, borderwidth=0)
+    style.configure("TNotebook", background=color("canvas"), borderwidth=0)
     style.configure(
         "TNotebook.Tab",
-        background=_HEADER,
-        foreground=_INK,
-        bordercolor=_BORDER,
+        background=color("header"),
+        foreground=color("header_text"),
+        bordercolor=color("border"),
         borderwidth=1,
         padding=(18, 9),
     )
     style.map(
         "TNotebook.Tab",
-        background=[("selected", _SURFACE), ("active", "#E8ECEE")],
-        foreground=[("selected", _TEAL_DARK)],
+        background=[
+            ("selected", color("surface")),
+            ("active", color("tab_active")),
+        ],
+        foreground=[
+            ("selected", color("primary_action")),
+            ("active", color("tab_active_text")),
+        ],
         expand=[("selected", (0, 0, 0, 1))],
     )
     style.configure(
         "Transfer.Horizontal.TProgressbar",
-        background=_TEAL,
-        troughcolor=_SURFACE,
-        bordercolor=_BORDER,
-        lightcolor=_TEAL,
-        darkcolor=_TEAL,
+        background=color("progress"),
+        troughcolor=color("surface"),
+        bordercolor=color("border"),
+        lightcolor=color("progress"),
+        darkcolor=color("progress"),
         thickness=14,
     )
 

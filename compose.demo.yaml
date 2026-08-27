@@ -1,0 +1,56 @@
+name: file-transfer-demo
+
+x-demo-computer: &demo-computer
+  image: file-transfer-demo-computer:local
+  build:
+    context: .
+    dockerfile: packaging/Dockerfile
+    target: demo
+  depends_on:
+    demo-keygen:
+      condition: service_completed_successfully
+  expose:
+    - "22"
+  volumes:
+    - demo-keys:/demo-keys:ro
+  healthcheck:
+    test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6080"]
+    interval: 5s
+    timeout: 2s
+    retries: 20
+    start_period: 10s
+
+services:
+  demo-keygen:
+    image: file-transfer-demo-keygen:local
+    build:
+      context: .
+      dockerfile: packaging/Dockerfile
+      target: demo-keygen
+    volumes:
+      - demo-keys:/demo-keys
+    restart: "no"
+
+  computer-a:
+    <<: *demo-computer
+    hostname: computer-a
+    environment:
+      DEMO_SIDE: computer-a
+      PEER_HOST: computer-b
+    ports:
+      # DEMO ONLY: noVNC has no password, so never bind this beyond localhost.
+      - "127.0.0.1:${COMPUTER_A_PORT:-6081}:6080"
+
+  computer-b:
+    <<: *demo-computer
+    hostname: computer-b
+    environment:
+      DEMO_SIDE: computer-b
+      PEER_HOST: computer-a
+    ports:
+      # DEMO ONLY: noVNC has no password, so never bind this beyond localhost.
+      - "127.0.0.1:${COMPUTER_B_PORT:-6082}:6080"
+
+volumes:
+  # Removing this named volume rotates the shared client key and both host keys.
+  demo-keys:
