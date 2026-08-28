@@ -49,6 +49,20 @@ def test_demo_compose_defines_two_browser_computers_and_key_bootstrap() -> None:
         "service_completed_successfully"
     )
 
+    a_key_volume = next(
+        volume
+        for volume in services["computer-a"]["volumes"]
+        if volume["target"] == "/demo-keys"
+    )
+    b_key_volume = next(
+        volume
+        for volume in services["computer-b"]["volumes"]
+        if volume["target"] == "/demo-keys"
+    )
+    assert a_key_volume["source"] != b_key_volume["source"]
+    assert "22" not in services["computer-a"].get("expose", [])
+    assert "22" in services["computer-b"]["expose"]
+
     entrypoint = (project_directory / "packaging/demo/side-entrypoint.sh").read_text()
     assert '"$demo_home/library-updates"' in entrypoint
     assert '"$demo_home/software-updates"' in entrypoint
@@ -62,3 +76,5 @@ def test_demo_compose_defines_two_browser_computers_and_key_bootstrap() -> None:
     assert "pcmanfm" in dockerfile
     assert "packaging/demo/work-transfer-mark.svg" in dockerfile
     assert "install -d -m 755 /usr/local/share/work-transfer" in dockerfile
+    assert "-rfbauth" in desktop
+    assert "-nopw" not in desktop

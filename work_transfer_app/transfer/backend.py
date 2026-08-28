@@ -6,7 +6,7 @@ import asyncio
 import shlex
 from collections.abc import Callable
 from contextlib import suppress
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Protocol, Self, cast
 
 import asyncssh
@@ -145,19 +145,28 @@ class ScpTransferBackend:
     ) -> TransferResult:
         """Upload one file through a unique part path and commit on success."""
 
-        if not job.source.is_file():
-            return TransferResult(
-                job.id,
-                TransferState.FAILED,
-                "source_file_missing",
-                TransferErrorKind.FILE,
-            )
         try:
+            try:
+                source_path = job.source_for_transfer
+                source_size = job.source_size
+            except RuntimeError:
+                return TransferResult(
+                    job.id,
+                    TransferState.FAILED,
+                    "source_file_missing",
+                    TransferErrorKind.FILE,
+                )
             options = self._connection_options(job.connection)
             async with self._connector(
                 job.connection.host, job.connection.port, **options
             ) as connection:
-                return await self._transfer_connected(connection, job, on_progress)
+                return await self._transfer_connected(
+                    connection,
+                    job,
+                    source_path,
+                    source_size,
+                    on_progress,
+                )
         except asyncio.CancelledError:
             return TransferResult(job.id, TransferState.ABORTED)
         except _LocalConfigError as error:
@@ -171,11 +180,15 @@ class ScpTransferBackend:
                 self._message(error),
                 self._error_kind(error),
             )
+        finally:
+            job.close_source()
 
     async def _transfer_connected(
         self,
         connection: _ConnectionContext,
         job: TransferJob,
+        source_path: Path,
+        source_size: int,
         on_progress: ProgressCallback,
     ) -> TransferResult:
         """Run SCP and safe commit over one already-open connection."""
@@ -196,7 +209,7 @@ class ScpTransferBackend:
                     TransferErrorKind.FILE,
                 )
 
-            estimator = ProgressEstimator(job.id, job.source.stat().st_size)
+            estimator = ProgressEstimator(job.id, source_size)
             progress_signal = asyncio.Event()
 
             def handle_progress(
@@ -215,7 +228,7 @@ class ScpTransferBackend:
             try:
                 transfer_task = asyncio.create_task(
                     asyncssh.scp(
-                        job.source,
+                        source_path,
                         (
                             cast(asyncssh.SSHClientConnection, connection),
                             shlex.quote(temporary_remote_path),

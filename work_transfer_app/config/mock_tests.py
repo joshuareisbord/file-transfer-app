@@ -6,10 +6,10 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from work_transfer_app.config.update_destinations import (
+from work_transfer_app.config.toml import (
     ConfigLoadError,
-    _load_toml,
-    _require_exact_keys,
+    load_toml,
+    require_exact_keys,
 )
 
 _RESOURCE_NAME = "tests.toml"
@@ -29,8 +29,8 @@ class MockTestDefinition:
 def load_mock_tests(path: Path | None = None) -> tuple[MockTestDefinition, ...]:
     """Load and validate ordered mock-test definitions from TOML."""
 
-    raw = _load_toml(path, _RESOURCE_NAME)
-    _require_exact_keys(raw, {"tests"}, "mock-test configuration")
+    raw = load_toml(path, _RESOURCE_NAME)
+    require_exact_keys(raw, {"tests"}, "mock-test configuration")
 
     tests = raw["tests"]
     if not isinstance(tests, list):
@@ -54,7 +54,7 @@ def _parse_test_definition(value: object, index: int) -> MockTestDefinition:
 
     if not isinstance(value, dict):
         raise ConfigLoadError(f"Mock-test entry {index} must be a TOML table.")
-    _require_exact_keys(value, _TEST_KEYS, f"mock-test entry {index}")
+    require_exact_keys(value, _TEST_KEYS, f"mock-test entry {index}")
 
     test_id = value["id"]
     name = value["name"]

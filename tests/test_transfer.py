@@ -239,6 +239,42 @@ def test_scp_backend_commits_via_unique_part_file_with_key_only_auth(
     }
 
 
+def test_scp_backend_transfers_pinned_bytes_when_source_path_is_replaced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pathname swap after Start cannot change the bytes sent by SCP."""
+
+    source = tmp_path / "approved-update.bin"
+    source.write_bytes(b"approved update")
+    secret = tmp_path / "operator-secret.txt"
+    secret.write_bytes(b"operator secret")
+    remote_files: dict[str, bytes] = {}
+    connection = _FakeConnection(remote_files)
+    opened_source_paths: list[Path] = []
+
+    async def fake_scp(
+        source_path: Path,
+        destination: tuple[_FakeConnection, str],
+        **_kwargs: object,
+    ) -> None:
+        remote_connection, shell_path = destination
+        opened_source_paths.append(source_path)
+        remote_connection.files[_raw_shell_path(shell_path)] = source_path.read_bytes()
+
+    monkeypatch.setattr("work_transfer_app.transfer.backend.asyncssh.scp", fake_scp)
+    backend = ScpTransferBackend(connector=_FakeConnector(connection))
+    job = TransferJob.create(source, "/srv/incoming", _config(tmp_path))
+
+    source.unlink()
+    source.symlink_to(secret)
+    result = asyncio.run(backend.transfer(job, lambda _progress: None))
+
+    assert result.state is TransferState.COMPLETED
+    assert remote_files == {"/srv/incoming/approved-update.bin": b"approved update"}
+    with pytest.raises(OSError):
+        opened_source_paths[0].read_bytes()
+
+
 @pytest.mark.parametrize(
     "remote_directory",
     [

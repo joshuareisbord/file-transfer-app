@@ -2,8 +2,8 @@
 
 from work_transfer_app.config.mock_tests import MockTestDefinition, load_mock_tests
 from work_transfer_app.config.settings import SettingsStore, default_settings_path
+from work_transfer_app.config.toml import ConfigLoadError
 from work_transfer_app.config.update_destinations import (
-    ConfigLoadError,
     UpdateDestinations,
     load_update_destinations,
 )

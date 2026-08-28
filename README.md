@@ -20,7 +20,17 @@ From PowerShell, Command Prompt, or another terminal in the repository, run:
 docker compose --file compose.demo.yaml up --build
 ```
 
-Open both desktops after the services are ready:
+In a second terminal, read each generated desktop password:
+
+```bash
+docker compose --file compose.demo.yaml exec -T computer-a \
+  cat /demo-keys/vnc_password
+docker compose --file compose.demo.yaml exec -T computer-b \
+  cat /demo-keys/vnc_password
+```
+
+Open both desktops after the services are ready, then enter the corresponding
+eight-character password:
 
 - Computer A: <http://127.0.0.1:6081/vnc.html?autoconnect=1&resize=scale>
 - Computer B: <http://127.0.0.1:6082/vnc.html?autoconnect=1&resize=scale>
@@ -39,7 +49,8 @@ Run **Test connection**, open **Library Update**, select the sample file under
 `/home/demo/outgoing`, and start the transfer. The receiving file appears under
 `/home/demo/library-updates` in Computer B's open file manager. The demo
 provisions the SSH keys, strict `known_hosts` entry, configured update
-directories, and Computer A's sample file automatically.
+directories, and Computer A's sample file automatically. Only Computer A
+receives the SCP client private key, and only Computer B runs an SSH server.
 
 Stop the demo with `Ctrl+C`, then remove its containers:
 
@@ -47,15 +58,17 @@ Stop the demo with `Ctrl+C`, then remove its containers:
 docker compose --file compose.demo.yaml down
 ```
 
-To also discard the demo-only SSH keys and reset all state:
+To also discard the demo-only SSH keys and desktop passwords, rotate every
+credential, and reset all state:
 
 ```bash
 docker compose --file compose.demo.yaml down --volumes
 ```
 
-The browser desktops intentionally have no password and are published only on
-the Windows computer's loopback interface. This environment is for local
-demonstration only and must not be exposed as a production service.
+Each browser desktop has its own random password and is published only on the
+Windows computer's loopback interface. Classic VNC authentication is suitable
+for this local proof of concept, not for exposing the demo as a production
+service.
 
 ## Build the Ubuntu executable
 
@@ -151,6 +164,8 @@ requires for strict host verification.
    then run **Test connection**.
 2. In **Library Update** or **SW Update**, select one file and start the
    transfer. The destination is fixed by `work_transfer_app/config/updates.toml`.
+   The app pins the open source file at Start so a later pathname replacement
+   cannot change the bytes sent.
 3. Follow progress, throughput, and ETA in the persistent bottom tray. Abort
    cancels the active transfer and cleans its temporary remote file.
 4. Review successfully transferred files in the selected update page's

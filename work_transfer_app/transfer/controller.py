@@ -100,9 +100,7 @@ class TransferController:
     def start(self, source: Path, remote_directory: str) -> TransferJob:
         """Start a file transfer using the last successfully tested connection."""
 
-        normalized_source = source.expanduser().resolve()
-        if not normalized_source.is_file():
-            raise ValueError("source_file_missing")
+        normalized_source = source.expanduser().absolute()
 
         with self._state_lock:
             if self._closed:
@@ -115,7 +113,12 @@ class TransferController:
 
             job = TransferJob.create(normalized_source, remote_directory, connection)
             self._active_job_id = job.id
-            self._loop.call_soon_threadsafe(self._start_on_loop, job)
+            try:
+                self._loop.call_soon_threadsafe(self._start_on_loop, job)
+            except RuntimeError:
+                self._active_job_id = None
+                job.close_source()
+                raise
             return job
 
     def abort(self) -> bool:
@@ -187,6 +190,7 @@ class TransferController:
 
         if self._shutting_down:
             self._clear_active_job(job.id)
+            job.close_source()
             return
         self.events.put(TransferStateEvent(job.id, TransferState.CONNECTING))
         self.events.put(TransferStateEvent(job.id, TransferState.TRANSFERRING))
@@ -196,16 +200,19 @@ class TransferController:
         """Execute one backend transfer and publish its terminal outcome."""
 
         try:
-            result = await self._backend.transfer(job, self._publish_progress)
-        except asyncio.CancelledError:
-            result = TransferResult(job.id, TransferState.ABORTED)
-        except Exception as error:  # noqa: BLE001 - isolate backend failures
-            result = TransferResult(
-                job.id,
-                TransferState.FAILED,
-                str(error).strip() or type(error).__name__,
-                TransferErrorKind.UNKNOWN,
-            )
+            try:
+                result = await self._backend.transfer(job, self._publish_progress)
+            except asyncio.CancelledError:
+                result = TransferResult(job.id, TransferState.ABORTED)
+            except Exception as error:  # noqa: BLE001 - isolate backend failures
+                result = TransferResult(
+                    job.id,
+                    TransferState.FAILED,
+                    str(error).strip() or type(error).__name__,
+                    TransferErrorKind.UNKNOWN,
+                )
+        finally:
+            job.close_source()
 
         should_degrade = False
         if result.error_kind.degrades_connection and not self._shutting_down:

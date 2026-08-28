@@ -9,10 +9,6 @@ x-demo-computer: &demo-computer
   depends_on:
     demo-keygen:
       condition: service_completed_successfully
-  expose:
-    - "22"
-  volumes:
-    - demo-keys:/demo-keys:ro
   healthcheck:
     test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6080"]
     interval: 5s
@@ -28,7 +24,8 @@ services:
       dockerfile: packaging/Dockerfile
       target: demo-keygen
     volumes:
-      - demo-keys:/demo-keys
+      - computer-a-keys:/computer-a-keys
+      - computer-b-keys:/computer-b-keys
     restart: "no"
 
   computer-a:
@@ -37,8 +34,10 @@ services:
     environment:
       DEMO_SIDE: computer-a
       PEER_HOST: computer-b
+    volumes:
+      - computer-a-keys:/demo-keys:ro
     ports:
-      # DEMO ONLY: noVNC has no password, so never bind this beyond localhost.
+      # Keep this local even though VNC also requires a generated password.
       - "127.0.0.1:${COMPUTER_A_PORT:-6081}:6080"
 
   computer-b:
@@ -46,10 +45,15 @@ services:
     hostname: computer-b
     environment:
       DEMO_SIDE: computer-b
+    expose:
+      - "22"
+    volumes:
+      - computer-b-keys:/demo-keys:ro
     ports:
-      # DEMO ONLY: noVNC has no password, so never bind this beyond localhost.
+      # Keep this local even though VNC also requires a generated password.
       - "127.0.0.1:${COMPUTER_B_PORT:-6082}:6080"
 
 volumes:
-  # Removing this named volume rotates the shared client key and both host keys.
-  demo-keys:
+  # Separate bundles preserve A-to-B authority across sibling containers.
+  computer-a-keys:
+  computer-b-keys:

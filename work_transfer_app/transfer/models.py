@@ -1,11 +1,72 @@
-"""Immutable data exchanged by transfer backends, controllers, and UI code."""
+"""Data exchanged by transfer backends, controllers, and UI code."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
+import stat
+import threading
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
+
+
+class _PinnedSourceFile:
+    """Own one regular-file descriptor from transfer start through cleanup."""
+
+    __slots__ = ("_descriptor", "_descriptor_root", "_lock", "size")
+
+    def __init__(self, source: Path) -> None:
+        """Open and validate the selected source without an asynchronous race."""
+
+        self._descriptor = -1
+        self._descriptor_root = Path()
+        self._lock = threading.Lock()
+        self.size = 0
+        descriptor_root = next(
+            (
+                candidate
+                for candidate in (Path("/proc/self/fd"), Path("/dev/fd"))
+                if candidate.is_dir()
+            ),
+            None,
+        )
+        if descriptor_root is None:
+            raise OSError("source_descriptor_unavailable")
+
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+        descriptor = os.open(source, flags)
+        self._descriptor = descriptor
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            self.close()
+            raise OSError("source_file_missing")
+
+        self._descriptor_root = descriptor_root
+        self.size = metadata.st_size
+
+    @property
+    def transfer_path(self) -> Path:
+        """Return the descriptor-backed path without resolving it to a pathname."""
+
+        with self._lock:
+            if self._descriptor < 0:
+                raise RuntimeError("source_file_closed")
+            return self._descriptor_root / str(self._descriptor)
+
+    def close(self) -> None:
+        """Close the descriptor exactly once, including after error paths."""
+
+        with self._lock:
+            descriptor = self._descriptor
+            self._descriptor = -1
+        if descriptor >= 0:
+            os.close(descriptor)
+
+    def __del__(self) -> None:
+        """Provide a last-resort close if a caller abandons an unstarted job."""
+
+        self.close()
 
 
 class TransferState(StrEnum):
@@ -82,17 +143,22 @@ class ConnectionTestResult:
 
 @dataclass(frozen=True, slots=True)
 class TransferJob:
-    """One source file and the tested connection snapshot used to send it."""
+    """One pinned source file and tested connection snapshot used to send it."""
 
     id: str
     source: Path
     remote_directory: str
     connection: ConnectionConfig
+    _source_handle: _PinnedSourceFile | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         """Normalize paths and reject remote path control characters."""
 
-        source = self.source.expanduser().resolve()
+        source = self.source.expanduser().absolute()
         remote_directory = self.remote_directory.strip()
         if not remote_directory.startswith(("/", "~/")):
             raise ValueError("invalid_remote_directory")
@@ -109,22 +175,46 @@ class TransferJob:
         remote_directory: str,
         connection: ConnectionConfig,
     ) -> TransferJob:
-        """Create a job with a collision-resistant identifier."""
+        """Create a job while synchronously pinning the selected regular file."""
 
-        return cls(uuid4().hex, source, remote_directory, connection)
+        normalized_source = source.expanduser().absolute()
+        try:
+            source_handle = _PinnedSourceFile(normalized_source)
+        except OSError as error:
+            raise ValueError("source_file_missing") from error
+        try:
+            return cls(
+                uuid4().hex,
+                normalized_source,
+                remote_directory,
+                connection,
+                source_handle,
+            )
+        except Exception:
+            source_handle.close()
+            raise
 
     @property
-    def final_remote_path(self) -> str:
-        """Return the final remote pathname for this job."""
+    def source_size(self) -> int:
+        """Return the captured size used for transfer progress estimation."""
 
-        return str(PurePosixPath(self.remote_directory) / self.source.name)
+        if self._source_handle is None:
+            raise RuntimeError("source_file_not_pinned")
+        return self._source_handle.size
 
     @property
-    def temporary_remote_path(self) -> str:
-        """Return the unique same-directory staging pathname for this job."""
+    def source_for_transfer(self) -> Path:
+        """Return the open descriptor path which SCP must read."""
 
-        temporary_name = f".{self.source.name}.{self.id}.part"
-        return str(PurePosixPath(self.remote_directory) / temporary_name)
+        if self._source_handle is None:
+            raise RuntimeError("source_file_not_pinned")
+        return self._source_handle.transfer_path
+
+    def close_source(self) -> None:
+        """Release this job's pinned source descriptor idempotently."""
+
+        if self._source_handle is not None:
+            self._source_handle.close()
 
 
 @dataclass(frozen=True, slots=True)
