@@ -14,15 +14,15 @@ import pytest
 
 from work_transfer_app.transfer import (
     ConnectionConfig,
+    ConnectionDegradedEvent,
     ConnectionTestedEvent,
     ConnectionTestResult,
-    QueuePausedEvent,
     ScpTransferBackend,
+    TransferController,
     TransferErrorKind,
     TransferFinishedEvent,
     TransferJob,
     TransferProgress,
-    TransferQueueController,
     TransferResult,
     TransferState,
     TransferStateEvent,
@@ -140,7 +140,7 @@ def _raw_shell_path(shell_path: str) -> str:
 
 
 def _wait_for_event(
-    controller: TransferQueueController,
+    controller: TransferController,
     event_type: type[Any],
     predicate: Callable[[Any], bool] = lambda _event: True,
     timeout: float = 3.0,
@@ -370,7 +370,7 @@ def test_scp_backend_abort_removes_partial_remote_file(
 
 
 class _ScriptedBackend:
-    """Drive queue behavior without making network connections."""
+    """Drive single-transfer behavior without making network connections."""
 
     def __init__(self) -> None:
         self.started: list[str] = []
@@ -385,7 +385,7 @@ class _ScriptedBackend:
         job: TransferJob,
         on_progress: Callable[[TransferProgress], None],
     ) -> TransferResult:
-        """Abort the first job and complete later jobs."""
+        """Block the first job until aborted and complete later jobs."""
 
         self.started.append(job.id)
         if len(self.started) == 1:
@@ -404,11 +404,13 @@ class _ScriptedBackend:
         return TransferResult(job.id, TransferState.COMPLETED)
 
 
-def test_queue_aborts_active_job_then_continues_sequentially(tmp_path: Path) -> None:
-    """Cancellation clears the active slot without blocking the next job."""
+def test_controller_rejects_second_transfer_until_active_transfer_aborts(
+    tmp_path: Path,
+) -> None:
+    """One reserved active slot rejects overlap and reopens after cancellation."""
 
     backend = _ScriptedBackend()
-    controller = TransferQueueController(backend)
+    controller = TransferController(backend)
     try:
         connection = _config(tmp_path)
         test_result = controller.test_connection(connection).result(timeout=2)
@@ -419,10 +421,18 @@ def test_queue_aborts_active_job_then_continues_sequentially(tmp_path: Path) -> 
         first_source.write_bytes(b"first")
         second_source = tmp_path / "second.bin"
         second_source.write_bytes(b"second")
-        first = controller.enqueue(first_source, "/srv/incoming")
-        second = controller.enqueue(second_source, "/srv/incoming")
+        first = controller.start(first_source, "/srv/incoming")
+        with pytest.raises(RuntimeError, match="^transfer_active$"):
+            controller.start(second_source, "/srv/incoming")
 
-        _wait_for_event(
+        connecting = _wait_for_event(
+            controller,
+            TransferStateEvent,
+            lambda event: (
+                event.job_id == first.id and event.state is TransferState.CONNECTING
+            ),
+        )
+        transferring = _wait_for_event(
             controller,
             TransferStateEvent,
             lambda event: (
@@ -430,12 +440,20 @@ def test_queue_aborts_active_job_then_continues_sequentially(tmp_path: Path) -> 
             ),
         )
         assert controller.abort() is True
+        cancelling = _wait_for_event(
+            controller,
+            TransferStateEvent,
+            lambda event: (
+                event.job_id == first.id and event.state is TransferState.CANCELLING
+            ),
+        )
 
         aborted = _wait_for_event(
             controller,
             TransferFinishedEvent,
             lambda event: event.result.job_id == first.id,
         )
+        second = controller.start(second_source, "/srv/incoming")
         completed = _wait_for_event(
             controller,
             TransferFinishedEvent,
@@ -443,17 +461,21 @@ def test_queue_aborts_active_job_then_continues_sequentially(tmp_path: Path) -> 
         )
         assert aborted.result.state is TransferState.ABORTED
         assert completed.result.state is TransferState.COMPLETED
+        assert [connecting.state, transferring.state, cancelling.state] == [
+            TransferState.CONNECTING,
+            TransferState.TRANSFERRING,
+            TransferState.CANCELLING,
+        ]
         assert backend.started == [first.id, second.id]
     finally:
         controller.shutdown()
 
 
 class _FailureBackend:
-    """Return file and connection failures in a deterministic order."""
+    """Return a caller-selected transfer failure without network access."""
 
-    def __init__(self) -> None:
-        self.calls = 0
-        self.start_release = threading.Event()
+    def __init__(self, error_kind: TransferErrorKind) -> None:
+        self.error_kind = error_kind
 
     async def test_connection(self, config: ConnectionConfig) -> ConnectionTestResult:
         """Accept every connection config."""
@@ -465,57 +487,77 @@ class _FailureBackend:
         job: TransferJob,
         on_progress: Callable[[TransferProgress], None],
     ) -> TransferResult:
-        """Fail one file, then one connection, and then succeed."""
+        """Return the configured failure for one transfer."""
 
         del on_progress
-        self.calls += 1
-        if self.calls == 1:
-            await asyncio.to_thread(self.start_release.wait)
-            return TransferResult(
-                job.id,
-                TransferState.FAILED,
-                "remote path rejected",
-                TransferErrorKind.FILE,
-            )
-        if self.calls == 2:
-            return TransferResult(
-                job.id,
-                TransferState.FAILED,
-                "connection lost",
-                TransferErrorKind.CONNECTION,
-            )
-        return TransferResult(job.id, TransferState.COMPLETED)
+        return TransferResult(
+            job.id,
+            TransferState.FAILED,
+            "transfer failed",
+            self.error_kind,
+        )
 
 
-def test_queue_continues_file_errors_and_pauses_connection_errors(
+@pytest.mark.parametrize(
+    "error_kind",
+    [
+        TransferErrorKind.AUTHENTICATION,
+        TransferErrorKind.HOST_KEY,
+        TransferErrorKind.CONNECTION,
+    ],
+)
+def test_connection_failure_degrades_and_invalidates_tested_connection(
     tmp_path: Path,
+    error_kind: TransferErrorKind,
 ) -> None:
-    """Only failures which invalidate connectivity pause later work."""
+    """Connection-class transfer failures require a fresh connection test."""
 
-    backend = _FailureBackend()
-    controller = TransferQueueController(backend)
+    backend = _FailureBackend(error_kind)
+    controller = TransferController(backend)
     try:
         connection = _config(tmp_path)
         controller.test_connection(connection).result(timeout=2)
-        for name in ("one.bin", "two.bin", "three.bin"):
-            source = tmp_path / name
-            source.write_bytes(name.encode())
-            controller.enqueue(source, "/srv/incoming")
-        backend.start_release.set()
+        _wait_for_event(controller, ConnectionTestedEvent)
+        source = tmp_path / "update.bin"
+        source.write_bytes(b"update")
+        job = controller.start(source, "/srv/incoming")
 
-        paused = _wait_for_event(controller, QueuePausedEvent)
-        assert paused.error_kind is TransferErrorKind.CONNECTION
-        assert backend.calls == 2
-        tested = controller.test_connection(connection).result(timeout=2)
-        assert tested.can_resume_queue is True
-        assert controller.resume() is True
-        final = _wait_for_event(
+        finished = _wait_for_event(
             controller,
             TransferFinishedEvent,
-            lambda event: event.result.state is TransferState.COMPLETED,
+            lambda event: event.result.job_id == job.id,
         )
-        assert final.result.state is TransferState.COMPLETED
-        assert backend.calls == 3
+        degraded = _wait_for_event(controller, ConnectionDegradedEvent)
+
+        assert finished.result.state is TransferState.FAILED
+        assert degraded.reason == "transfer failed"
+        assert degraded.error_kind is error_kind
+        assert controller.tested_connection is None
+        with pytest.raises(RuntimeError, match="^connection_not_tested$"):
+            controller.start(source, "/srv/incoming")
+    finally:
+        controller.shutdown()
+
+
+def test_file_failure_preserves_tested_connection_for_next_transfer(
+    tmp_path: Path,
+) -> None:
+    """A remote file failure does not degrade an otherwise valid connection."""
+
+    connection = _config(tmp_path)
+    controller = TransferController(_FailureBackend(TransferErrorKind.FILE))
+    try:
+        controller.test_connection(connection).result(timeout=2)
+        _wait_for_event(controller, ConnectionTestedEvent)
+        source = tmp_path / "update.bin"
+        source.write_bytes(b"update")
+        controller.start(source, "/srv/incoming")
+
+        _wait_for_event(controller, TransferFinishedEvent)
+
+        assert controller.tested_connection == connection
+        with pytest.raises(Empty):
+            controller.events.get_nowait()
     finally:
         controller.shutdown()
 
@@ -545,13 +587,49 @@ class _DelayedTestBackend:
         return TransferResult(job.id, TransferState.COMPLETED)
 
 
+class _InterleavedFailureBackend:
+    """Fail an old transfer while a newer connection test remains in flight."""
+
+    def __init__(self, delayed_host: str) -> None:
+        self.delayed_host = delayed_host
+        self.transfer_started = threading.Event()
+        self.release_transfer = threading.Event()
+        self.connection_test_started = threading.Event()
+        self.release_connection_test = threading.Event()
+
+    async def test_connection(self, config: ConnectionConfig) -> ConnectionTestResult:
+        """Delay only the newer host's connection test."""
+
+        if config.host == self.delayed_host:
+            self.connection_test_started.set()
+            await asyncio.to_thread(self.release_connection_test.wait)
+        return ConnectionTestResult(config=config, is_success=True)
+
+    async def transfer(
+        self,
+        job: TransferJob,
+        on_progress: Callable[[TransferProgress], None],
+    ) -> TransferResult:
+        """Release one connection failure at the test-selected time."""
+
+        del on_progress
+        self.transfer_started.set()
+        await asyncio.to_thread(self.release_transfer.wait)
+        return TransferResult(
+            job.id,
+            TransferState.FAILED,
+            "old connection lost",
+            TransferErrorKind.CONNECTION,
+        )
+
+
 def test_newer_connection_test_makes_older_completion_stale(tmp_path: Path) -> None:
     """An out-of-order older success cannot replace or reopen the latest config."""
 
     first = _config(tmp_path, host="first.example")
     second = _config(tmp_path, host="second.example")
     backend = _DelayedTestBackend((first.host, second.host))
-    controller = TransferQueueController(backend)
+    controller = TransferController(backend)
     try:
         first_future = controller.test_connection(first)
         assert backend.started[first.host].wait(timeout=2)
@@ -582,15 +660,18 @@ def test_invalidation_makes_inflight_connection_completion_stale(
 
     config = _config(tmp_path, host="pending.example")
     backend = _DelayedTestBackend((config.host,))
-    controller = TransferQueueController(backend)
+    controller = TransferController(backend)
     try:
         future = controller.test_connection(config)
         assert backend.started[config.host].wait(timeout=2)
         controller.invalidate_connection()
         backend.release[config.host].set()
 
+        invalidated = _wait_for_event(controller, ConnectionTestedEvent)
         stale = future.result(timeout=2)
 
+        assert invalidated.result.is_success is False
+        assert invalidated.result.message == "connection_invalidated"
         assert stale.is_success is False
         assert stale.is_stale is True
         assert controller.tested_connection is None
@@ -600,72 +681,157 @@ def test_invalidation_makes_inflight_connection_completion_stale(
         controller.shutdown()
 
 
-class _PauseOnceBackend:
-    """Pause after the first job and complete the next job after resume."""
+def test_invalidation_supersedes_buffered_connection_success(tmp_path: Path) -> None:
+    """A later invalidation event leaves observers disconnected after draining."""
+
+    config = _config(tmp_path)
+    controller = TransferController(_FailureBackend(TransferErrorKind.FILE))
+    try:
+        assert controller.test_connection(config).result(timeout=2).is_success is True
+        controller.invalidate_connection()
+
+        connected = _wait_for_event(controller, ConnectionTestedEvent)
+        invalidated = _wait_for_event(controller, ConnectionTestedEvent)
+
+        assert connected.result.is_success is True
+        assert invalidated.result.is_success is False
+        assert invalidated.result.message == "connection_invalidated"
+        assert controller.tested_connection is None
+    finally:
+        controller.shutdown()
+
+
+def test_old_transfer_failure_does_not_stale_new_connection_test(
+    tmp_path: Path,
+) -> None:
+    """A failed old snapshot cannot invalidate a newer in-flight destination test."""
+
+    old_config = _config(tmp_path, host="old.example")
+    new_config = _config(tmp_path, host="new.example")
+    backend = _InterleavedFailureBackend(new_config.host)
+    controller = TransferController(backend)
+    try:
+        controller.test_connection(old_config).result(timeout=2)
+        _wait_for_event(controller, ConnectionTestedEvent)
+        source = tmp_path / "update.bin"
+        source.write_bytes(b"update")
+        controller.start(source, "/srv/incoming")
+        assert backend.transfer_started.wait(timeout=2)
+
+        new_test = controller.test_connection(new_config)
+        assert backend.connection_test_started.wait(timeout=2)
+        backend.release_transfer.set()
+        _wait_for_event(controller, TransferFinishedEvent)
+        with pytest.raises(Empty):
+            controller.events.get_nowait()
+
+        backend.release_connection_test.set()
+        result = new_test.result(timeout=2)
+        tested = _wait_for_event(controller, ConnectionTestedEvent)
+
+        assert result.is_success is True
+        assert result.is_stale is False
+        assert tested.result.config == new_config
+        assert controller.tested_connection == new_config
+    finally:
+        backend.release_transfer.set()
+        backend.release_connection_test.set()
+        controller.shutdown()
+
+
+def test_shutdown_cancels_active_transfer_and_closes_control_api(
+    tmp_path: Path,
+) -> None:
+    """Shutdown publishes the cancelled outcome and rejects later control work."""
+
+    controller = TransferController(_ScriptedBackend())
+    connection = _config(tmp_path)
+    controller.test_connection(connection).result(timeout=2)
+    _wait_for_event(controller, ConnectionTestedEvent)
+    source = tmp_path / "large.bin"
+    source.write_bytes(b"large")
+    job = controller.start(source, "/srv/incoming")
+    _wait_for_event(
+        controller,
+        TransferStateEvent,
+        lambda event: (
+            event.job_id == job.id and event.state is TransferState.TRANSFERRING
+        ),
+    )
+
+    controller.shutdown()
+
+    finished = _wait_for_event(controller, TransferFinishedEvent)
+    assert finished.result.state is TransferState.ABORTED
+    with pytest.raises(RuntimeError, match="^controller_closed$"):
+        controller.abort()
+
+
+class _DelayedCleanupBackend:
+    """Hold cancellation cleanup until the test explicitly releases it."""
 
     def __init__(self) -> None:
-        self.calls = 0
-        self.first_release = threading.Event()
+        self.cleanup_started = threading.Event()
+        self.release_cleanup = threading.Event()
+        self.cleanup_finished = threading.Event()
 
     async def test_connection(self, config: ConnectionConfig) -> ConnectionTestResult:
-        """Accept test configs so the controller can decide resume safety."""
+        """Accept the supplied connection snapshot."""
 
-        return ConnectionTestResult(config=config, is_success=True)
+        return ConnectionTestResult(config, True)
 
     async def transfer(
         self,
         job: TransferJob,
         on_progress: Callable[[TransferProgress], None],
     ) -> TransferResult:
-        """Fail the first active connection and complete the following job."""
+        """Model remote cleanup which outlives the first shutdown timeout."""
 
-        del on_progress
-        self.calls += 1
-        if self.calls == 1:
-            await asyncio.to_thread(self.first_release.wait)
-            return TransferResult(
-                job.id,
-                TransferState.FAILED,
-                "connection lost",
-                TransferErrorKind.CONNECTION,
-            )
-        return TransferResult(job.id, TransferState.COMPLETED)
+        _ = on_progress
+        try:
+            await asyncio.Event().wait()
+            raise AssertionError("Blocking test transfer unexpectedly returned")
+        except asyncio.CancelledError:
+            self.cleanup_started.set()
+            while not self.release_cleanup.is_set():
+                await asyncio.sleep(0.01)
+            self.cleanup_finished.set()
+            return TransferResult(job.id, TransferState.ABORTED)
 
 
-def test_paused_queue_resumes_only_after_matching_connection_test(
+def test_shutdown_timeout_keeps_cleanup_running_until_a_later_close(
     tmp_path: Path,
 ) -> None:
-    """A successful test for another destination cannot run snapshotted jobs."""
+    """A close timeout must not stop remote partial-file cleanup."""
 
-    queued_config = _config(tmp_path, host="queued.example")
-    other_config = _config(tmp_path, host="other.example")
-    backend = _PauseOnceBackend()
-    controller = TransferQueueController(backend)
+    backend = _DelayedCleanupBackend()
+    controller = TransferController(backend)
     try:
-        controller.test_connection(queued_config).result(timeout=2)
-        for name in ("first.bin", "second.bin"):
-            source = tmp_path / name
-            source.write_bytes(name.encode())
-            controller.enqueue(source, "/srv/incoming")
-        backend.first_release.set()
-        _wait_for_event(controller, QueuePausedEvent)
-
-        mismatched = controller.test_connection(other_config).result(timeout=2)
-        assert mismatched.is_success is True
-        assert mismatched.can_resume_queue is False
-        assert controller.resume() is False
-        assert backend.calls == 1
-
-        matched = controller.test_connection(queued_config).result(timeout=2)
-        assert matched.is_success is True
-        assert matched.can_resume_queue is True
-        assert controller.resume() is True
-        completed = _wait_for_event(
+        connection = _config(tmp_path)
+        controller.test_connection(connection).result(timeout=2)
+        _wait_for_event(controller, ConnectionTestedEvent)
+        source = tmp_path / "large.bin"
+        source.write_bytes(b"large")
+        job = controller.start(source, "/srv/incoming")
+        _wait_for_event(
             controller,
-            TransferFinishedEvent,
-            lambda event: event.result.state is TransferState.COMPLETED,
+            TransferStateEvent,
+            lambda event: (
+                event.job_id == job.id and event.state is TransferState.TRANSFERRING
+            ),
         )
-        assert completed.result.state is TransferState.COMPLETED
-        assert backend.calls == 2
+
+        with pytest.raises(TimeoutError, match="^shutdown_cleanup_timeout$"):
+            controller.shutdown(timeout=0.02)
+        assert backend.cleanup_started.wait(timeout=1)
+        assert backend.cleanup_finished.is_set() is False
+
+        backend.release_cleanup.set()
+        controller.shutdown(timeout=1)
+
+        assert backend.cleanup_finished.is_set() is True
+        finished = _wait_for_event(controller, TransferFinishedEvent)
+        assert finished.result.state is TransferState.ABORTED
     finally:
+        backend.release_cleanup.set()
         controller.shutdown()

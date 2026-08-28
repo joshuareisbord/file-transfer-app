@@ -112,23 +112,13 @@ class TransferControllerLike(Protocol):
 
         ...
 
-    def enqueue(self, source: Path, remote_directory: str) -> TransferJob:
-        """Add one file to the sequential transfer queue."""
-
-        ...
-
-    def remove(self, job_id: str) -> bool:
-        """Remove a waiting transfer from the queue."""
+    def start(self, source: Path, remote_directory: str) -> TransferJob:
+        """Start one transfer when the controller is idle."""
 
         ...
 
     def abort(self) -> bool:
         """Request cancellation of the active transfer."""
-
-        ...
-
-    def resume(self) -> bool:
-        """Resume a connection-paused queue after a successful retest."""
 
         ...
 

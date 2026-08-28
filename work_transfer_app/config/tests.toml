@@ -1,0 +1,15 @@
+[[tests]]
+id = "network_connectivity"
+name = "Network connectivity"
+
+[[tests]]
+id = "storage_availability"
+name = "Storage availability"
+
+[[tests]]
+id = "package_integrity"
+name = "Package integrity"
+
+[[tests]]
+id = "service_readiness"
+name = "Service readiness"

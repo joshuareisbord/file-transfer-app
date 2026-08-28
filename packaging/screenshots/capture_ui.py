@@ -15,7 +15,6 @@ from work_transfer_app.transfer import (
     ConnectionConfig,
     ConnectionTestedEvent,
     ConnectionTestResult,
-    JobQueuedEvent,
     TransferEvent,
     TransferFinishedEvent,
     TransferJob,
@@ -35,9 +34,11 @@ class ScreenshotController:
     """Provide the UI controller boundary without starting network work."""
 
     def __init__(self) -> None:
-        """Create the unused event queue required by the shell contract."""
+        """Create deterministic state required by the shell contract."""
 
         self.events: queue.Queue[TransferEvent] = queue.Queue()
+        self._connection: ConnectionConfig | None = None
+        self.last_started: TransferJob | None = None
 
     def test_connection(self, config: ConnectionConfig) -> Future[ConnectionTestResult]:
         """Return an immediately successful result for screenshot controls."""
@@ -49,27 +50,29 @@ class ScreenshotController:
     def invalidate_connection(self) -> None:
         """Accept visible connection edits without background state."""
 
-    def enqueue(self, source: Path, remote_directory: str) -> TransferJob:
-        """Reject real queue use because screenshot state is event-driven."""
+        self._connection = None
 
-        _ = (source, remote_directory)
-        raise RuntimeError("Screenshot controller does not enqueue files")
+    def accept_connection(self, config: ConnectionConfig) -> None:
+        """Retain the tested connection used by synthetic transfer starts."""
 
-    def remove(self, job_id: str) -> bool:
-        """Report that no synthetic row was removed."""
+        self._connection = config
 
-        _ = job_id
-        return False
+    def start(self, source: Path, remote_directory: str) -> TransferJob:
+        """Create one job without starting network work."""
+
+        if self._connection is None:
+            raise RuntimeError("connection_not_tested")
+        self.last_started = TransferJob.create(
+            source,
+            remote_directory,
+            self._connection,
+        )
+        return self.last_started
 
     def abort(self) -> bool:
         """Accept the synthetic active transfer cancellation action."""
 
         return True
-
-    def resume(self) -> bool:
-        """Report that no synthetic paused queue was resumed."""
-
-        return False
 
     def shutdown(self, timeout: float = 5.0) -> None:
         """Accept window shutdown without worker resources."""
@@ -108,7 +111,9 @@ def _create_sparse_file(path: Path, size: int) -> None:
 
 
 def _populate_connection(
-    window: WorkTransferWindow, root_directory: Path
+    window: WorkTransferWindow,
+    controller: ScreenshotController,
+    root_directory: Path,
 ) -> ConnectionConfig:
     """Show realistic direct-Ethernet SSH details in a successful state."""
 
@@ -130,46 +135,76 @@ def _populate_connection(
         identity_file=identity_file,
         known_hosts=known_hosts,
     )
+    controller.accept_connection(config)
     window._dispatch_event(ConnectionTestedEvent(ConnectionTestResult(config, True)))
     return config
 
 
+def _start_synthetic_transfer(
+    window: WorkTransferWindow,
+    controller: ScreenshotController,
+    tab_name: str,
+    source: Path,
+) -> TransferJob:
+    """Start a transfer through the same tab action used in production."""
+
+    tab = (
+        window._library_update_tab
+        if tab_name == "library"
+        else window._software_update_tab
+    )
+    controller.last_started = None
+    tab._source_path = source
+    tab._source_display.set(str(source))
+    tab._start_transfer()
+    if controller.last_started is None:
+        raise RuntimeError("Synthetic transfer did not start")
+    return controller.last_started
+
+
+def _populate_completed_transfer(
+    window: WorkTransferWindow,
+    controller: ScreenshotController,
+    root_directory: Path,
+    tab_name: str,
+    filename: str,
+    size: int,
+) -> None:
+    """Add one successful transfer to the selected page's session history."""
+
+    source = root_directory / filename
+    _create_sparse_file(source, size)
+    job = _start_synthetic_transfer(window, controller, tab_name, source)
+    window._dispatch_event(
+        TransferFinishedEvent(TransferResult(job.id, TransferState.COMPLETED))
+    )
+
+
+def _populate_test_results(window: WorkTransferWindow) -> None:
+    """Show readable pass and fail examples without waiting on random timers."""
+
+    test_ids = tuple(window._test_tab._status_variables)
+    for index, test_id in enumerate(test_ids):
+        window._test_tab._set_test_state(
+            test_id,
+            "fail" if index == len(test_ids) - 1 else "pass",
+        )
+
+
 def _populate_active_transfer(
     window: WorkTransferWindow,
+    controller: ScreenshotController,
     root_directory: Path,
-    config: ConnectionConfig,
 ) -> None:
-    """Drive the real shell event path into a representative active state."""
+    """Drive the shell event path into a representative active state."""
 
     active_source = root_directory / "factory-calibration-archive.tar.gz"
-    queued_source = root_directory / "diagnostic-logs.csv"
-    completed_source = root_directory / "shift-report.pdf"
     _create_sparse_file(active_source, 700 * MIB)
-    _create_sparse_file(queued_source, 18 * MIB)
-    _create_sparse_file(completed_source, 3 * MIB)
-
-    active_job = TransferJob(
-        "capture-active",
+    active_job = _start_synthetic_transfer(
+        window,
+        controller,
+        "library",
         active_source,
-        "/srv/work-transfer/incoming",
-        config,
-    )
-    queued_job = TransferJob(
-        "capture-queued",
-        queued_source,
-        "/srv/work-transfer/incoming",
-        config,
-    )
-    completed_job = TransferJob(
-        "capture-completed",
-        completed_source,
-        "/srv/work-transfer/reports",
-        config,
-    )
-    for job in (active_job, queued_job, completed_job):
-        window._dispatch_event(JobQueuedEvent(job))
-    window._dispatch_event(
-        TransferFinishedEvent(TransferResult(completed_job.id, TransferState.COMPLETED))
     )
     window._dispatch_event(
         TransferStateEvent(active_job.id, TransferState.TRANSFERRING)
@@ -196,10 +231,16 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="work-transfer-screenshots-") as directory:
         root_directory = Path(directory)
         sys.__dict__["frozen"] = True
+        controller = ScreenshotController()
+        logo_path = (
+            Path(__file__).resolve().parents[2]
+            / "packaging/demo/work-transfer-mark.svg"
+        )
         root = create_window(
-            ScreenshotController(),
+            controller,
             Translator("en"),
             SettingsStore(path=root_directory / "settings.json"),
+            logo_path=logo_path,
         )
         try:
             root.geometry("980x760+0+0")
@@ -210,19 +251,42 @@ def main() -> None:
                 if isinstance(child, WorkTransferWindow)
             )
 
+            _populate_connection(window, controller, root_directory)
+            _populate_completed_transfer(
+                window,
+                controller,
+                root_directory,
+                "library",
+                "library-package-2026-08-27.tar",
+                24 * MIB,
+            )
             window._notebook.select(0)
-            _capture(root, output_directory / "01-transfer-idle.png")
+            _capture(root, output_directory / "01-library-update.png")
 
-            config = _populate_connection(window, root_directory)
+            _populate_completed_transfer(
+                window,
+                controller,
+                root_directory,
+                "software",
+                "control-software-4.8.0.pkg",
+                41 * MIB,
+            )
             window._notebook.select(1)
-            _capture(root, output_directory / "02-connection-tested.png")
+            _capture(root, output_directory / "02-software-update.png")
 
+            _populate_test_results(window)
             window._notebook.select(2)
-            _capture(root, output_directory / "03-settings.png")
+            _capture(root, output_directory / "03-test.png")
 
-            _populate_active_transfer(window, root_directory, config)
+            window._notebook.select(3)
+            _capture(root, output_directory / "04-connection-tested.png")
+
+            window._notebook.select(4)
+            _capture(root, output_directory / "05-settings.png")
+
+            _populate_active_transfer(window, controller, root_directory)
             window._notebook.select(0)
-            _capture(root, output_directory / "04-transfer-active.png")
+            _capture(root, output_directory / "06-library-update-active.png")
         finally:
             root.destroy()
 

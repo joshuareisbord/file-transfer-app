@@ -49,7 +49,8 @@ done
 install -d -m 700 -o "$demo_user" -g "$demo_user" "$demo_home/.ssh"
 install -d -m 755 -o "$demo_user" -g "$demo_user" \
     "$demo_home/outgoing" \
-    "$demo_home/incoming"
+    "$demo_home/library-updates" \
+    "$demo_home/software-updates"
 install -d -m 1777 /tmp/.X11-unix
 install -m 600 -o "$demo_user" -g "$demo_user" \
     "$key_directory/client_ed25519" \
@@ -61,12 +62,15 @@ install -m 600 -o "$demo_user" -g "$demo_user" \
     "$key_directory/client_ed25519.pub" \
     "$demo_home/.ssh/authorized_keys"
 
-printf '%s\n' \
-    "This file started on ${side}." \
-    "Send it to /home/demo/incoming on ${peer_host:-the peer computer}." \
-    >"$demo_home/outgoing/sample-from-${side}.txt"
-chown "$demo_user:$demo_user" "$demo_home/outgoing/sample-from-${side}.txt"
-chmod 644 "$demo_home/outgoing/sample-from-${side}.txt"
+if [[ "$side" == "computer-a" ]]; then
+    printf '%s\n' \
+        "This file started on computer-a." \
+        "Send it with Library Update to computer-b." \
+        >"$demo_home/outgoing/sample-from-computer-a.txt"
+    chown "$demo_user:$demo_user" \
+        "$demo_home/outgoing/sample-from-computer-a.txt"
+    chmod 644 "$demo_home/outgoing/sample-from-computer-a.txt"
+fi
 
 install -m 600 "$key_directory/host_${side}_ed25519" \
     /etc/ssh/ssh_host_ed25519_key
@@ -160,7 +164,7 @@ else
         "$demo_home/.ssh/known_hosts"
 fi
 
-runuser --user "$demo_user" -- /usr/local/bin/demo-desktop &
+runuser --user "$demo_user" -- /usr/local/bin/demo-desktop "$side" &
 desktop_pid=$!
 
 # shellcheck disable=SC2329  # Invoked indirectly by the signal traps below.

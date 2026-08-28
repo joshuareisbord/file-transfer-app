@@ -5,24 +5,24 @@ from __future__ import annotations
 import queue
 import threading
 import tkinter as tk
+from functools import partial
 from pathlib import Path
 from tkinter import messagebox, ttk
 from typing import cast
 
+from PIL import Image, ImageTk
+
+from work_transfer_app.config import MockTestDefinition, UpdateDestinations
 from work_transfer_app.transfer import (
     ConnectionConfig,
+    ConnectionDegradedEvent,
     ConnectionTestedEvent,
     ConnectionTestResult,
-    JobQueuedEvent,
-    JobRemovedEvent,
-    QueuePausedEvent,
-    QueueResumedEvent,
-    TransferErrorKind,
     TransferFinishedEvent,
     TransferJob,
     TransferProgress,
     TransferProgressEvent,
-    TransferResult,
+    TransferState,
     TransferStateEvent,
 )
 from work_transfer_app.ui.contracts import (
@@ -30,22 +30,22 @@ from work_transfer_app.ui.contracts import (
     TransferControllerLike,
     TranslatorLike,
 )
+from work_transfer_app.ui.logo import create_tk_header_logo, prepare_header_logo
 from work_transfer_app.ui.messages import localized_backend_message
 from work_transfer_app.ui.status_tray import TransferStatusTray
 from work_transfer_app.ui.styles import configure_styles
 from work_transfer_app.ui.tabs import (
     ConnectionTab,
-    QueueItemView,
     SettingsTab,
-    TransferTab,
+    TestTab,
+    UpdateTransferTab,
 )
 
 _EVENT_POLL_MS = 250
-_TERMINAL_STATES = {"completed", "aborted", "failed"}
 
 
 class WorkTransferWindow(ttk.Frame):
-    """Coordinate a fixed tabbed shell with a persistent status tray."""
+    """Coordinate five fixed tabs with a persistent transfer status tray."""
 
     def __init__(
         self,
@@ -54,6 +54,10 @@ class WorkTransferWindow(ttk.Frame):
         translator: TranslatorLike,
         settings: SettingsLike,
         current_language: str,
+        update_destinations: UpdateDestinations,
+        mock_tests: tuple[MockTestDefinition, ...],
+        *,
+        header_logo: Image.Image | None = None,
     ) -> None:
         """Build the UI and begin polling its background event boundary."""
 
@@ -61,20 +65,36 @@ class WorkTransferWindow(ttk.Frame):
         self._tk_root = root
         self._controller = controller
         self._translator = translator
-        self._jobs: dict[str, Path] = {}
-        self._job_states: dict[str, str] = {}
+        self._jobs: dict[str, TransferJob] = {}
+        self._job_owners: dict[str, UpdateTransferTab] = {}
         self._active_job_id: str | None = None
-        self._is_queue_paused = False
-        self._operation_results: queue.Queue[tuple[str, bool]] = queue.Queue()
+        self._is_connection_ready = False
+        self._abort_results: queue.Queue[bool] = queue.Queue()
+        self._shutdown_results: queue.Queue[BaseException | None] = queue.Queue()
         self._event_poll_id: str | None = None
         self._is_closing = False
-        self._build(settings, current_language)
+        self._is_shutdown_pending = False
+        self._header_logo_image: ImageTk.PhotoImage | None = None
+        self._build(
+            settings,
+            current_language,
+            update_destinations,
+            mock_tests,
+            header_logo,
+        )
         self._bind_keyboard_navigation()
         self._tk_root.protocol("WM_DELETE_WINDOW", self._close_requested)
         self._schedule_event_poll()
 
-    def _build(self, settings: SettingsLike, current_language: str) -> None:
-        """Lay out the fixed header, tab body, and transfer status tray."""
+    def _build(
+        self,
+        settings: SettingsLike,
+        current_language: str,
+        update_destinations: UpdateDestinations,
+        mock_tests: tuple[MockTestDefinition, ...],
+        header_logo: Image.Image | None,
+    ) -> None:
+        """Lay out the header, fixed tab body, and transfer status tray."""
 
         self.grid(row=0, column=0, sticky="nsew")
         self.columnconfigure(0, weight=1)
@@ -83,25 +103,64 @@ class WorkTransferWindow(ttk.Frame):
         header = ttk.Frame(self, style="Header.TFrame", padding=(20, 13))
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
+
+        brand = ttk.Frame(header, style="HeaderContent.TFrame")
+        brand.grid(row=0, column=0, rowspan=2, sticky="w")
+        text_column = 0
+        if header_logo is not None:
+            self._header_logo_image = create_tk_header_logo(brand, header_logo)
+            tk.Label(
+                brand,
+                image=self._header_logo_image,
+                background=ttk.Style(brand).lookup(
+                    "HeaderContent.TFrame", "background"
+                ),
+                borderwidth=0,
+                highlightthickness=0,
+                padx=0,
+                pady=0,
+                relief="flat",
+            ).grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 12))
+            text_column = 1
         ttk.Label(
-            header,
+            brand,
             text=self._translator.t("app.title"),
             style="AppTitle.TLabel",
-        ).grid(row=0, column=0, sticky="w")
+        ).grid(row=0, column=text_column, sticky="w")
         ttk.Label(
-            header,
+            brand,
             text=self._translator.t("app.subtitle"),
             style="AppSubtitle.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(2, 0))
+        ).grid(row=1, column=text_column, sticky="w", pady=(2, 0))
+
+        health = ttk.Frame(header, style="HeaderContent.TFrame")
+        health.grid(row=0, column=1, rowspan=2, sticky="e")
+        ttk.Label(
+            health,
+            text=self._translator.t("connection_health.label"),
+            style="AppSubtitle.TLabel",
+        ).grid(row=0, column=0, sticky="e", padx=(0, 10))
+        self._connection_health = ttk.Label(health)
+        self._connection_health.grid(row=0, column=1, sticky="e")
+        self._set_connection_health("disconnected")
 
         self._notebook = ttk.Notebook(self, takefocus=True)
         self._notebook.grid(row=1, column=0, sticky="nsew")
-        self._transfer_tab = TransferTab(
+        self._library_update_tab = UpdateTransferTab(
             self._notebook,
             self._translator,
-            self._add_transfer,
-            self._remove_transfer,
+            "library_update",
+            update_destinations.library_update,
+            self._start_library_transfer,
         )
+        self._software_update_tab = UpdateTransferTab(
+            self._notebook,
+            self._translator,
+            "software_update",
+            update_destinations.software_update,
+            self._start_software_transfer,
+        )
+        self._test_tab = TestTab(self._notebook, self._translator, mock_tests)
         self._connection_tab = ConnectionTab(
             self._notebook,
             self._translator,
@@ -114,11 +173,14 @@ class WorkTransferWindow(ttk.Frame):
             settings,
             current_language,
         )
-        self._notebook.add(self._transfer_tab, text=self._translator.t("tabs.transfer"))
-        self._notebook.add(
-            self._connection_tab, text=self._translator.t("tabs.connection")
-        )
-        self._notebook.add(self._settings_tab, text=self._translator.t("tabs.settings"))
+        for tab, translation_key in (
+            (self._library_update_tab, "tabs.library_update"),
+            (self._software_update_tab, "tabs.software_update"),
+            (self._test_tab, "tabs.test"),
+            (self._connection_tab, "tabs.connection"),
+            (self._settings_tab, "tabs.settings"),
+        ):
+            self._notebook.add(tab, text=self._translator.t(translation_key))
         self._notebook.enable_traversal()
 
         self._status_tray = TransferStatusTray(
@@ -129,63 +191,61 @@ class WorkTransferWindow(ttk.Frame):
         self._status_tray.grid(row=2, column=0, sticky="ew")
 
     def _bind_keyboard_navigation(self) -> None:
-        """Provide stable shortcuts for switching the three primary tabs."""
+        """Provide stable shortcuts for switching the five primary tabs."""
 
-        self._tk_root.bind("<Control-Key-1>", self._select_transfer_tab)
-        self._tk_root.bind("<Control-Key-2>", self._select_connection_tab)
-        self._tk_root.bind("<Control-Key-3>", self._select_settings_tab)
+        for position in range(5):
+            self._tk_root.bind(
+                f"<Control-Key-{position + 1}>",
+                partial(self._select_tab, position),
+            )
 
-    def _select_transfer_tab(self, _event: tk.Event[tk.Misc]) -> str:
-        """Select the transfer tab from its keyboard shortcut."""
+    def _select_tab(self, index: int, _event: tk.Event[tk.Misc]) -> str:
+        """Select one tab from its keyboard shortcut."""
 
-        self._notebook.select(0)
+        self._notebook.select(index)
         return "break"
 
-    def _select_connection_tab(self, _event: tk.Event[tk.Misc]) -> str:
-        """Select the connection tab from its keyboard shortcut."""
+    def _start_library_transfer(
+        self,
+        source: Path,
+        remote_directory: str,
+    ) -> TransferJob:
+        """Start a library update owned by the Library Update page."""
 
-        self._notebook.select(1)
-        return "break"
-
-    def _select_settings_tab(self, _event: tk.Event[tk.Misc]) -> str:
-        """Select the settings tab from its keyboard shortcut."""
-
-        self._notebook.select(2)
-        return "break"
-
-    def _add_transfer(self, source: Path, remote_directory: str) -> QueueItemView:
-        """Enqueue one transfer and return its immediate row representation."""
-
-        size = source.stat().st_size
-        job = self._controller.enqueue(source, remote_directory)
-        self._jobs[job.id] = job.source
-        self._job_states[job.id] = "queued"
-        return QueueItemView(
-            job_id=job.id,
-            source=job.source,
-            remote_directory=job.remote_directory,
-            size=size,
+        return self._start_transfer(
+            self._library_update_tab,
+            source,
+            remote_directory,
         )
 
-    def _remove_transfer(self, job_id: str) -> None:
-        """Request removal without blocking the Tk thread on controller I/O."""
+    def _start_software_transfer(
+        self,
+        source: Path,
+        remote_directory: str,
+    ) -> TransferJob:
+        """Start a software update owned by the SW Update page."""
 
-        # Controller control calls can wait for its asyncio loop; keep that wait off Tk.
-        threading.Thread(
-            target=self._remove_on_worker,
-            args=(job_id,),
-            name="work-transfer-remove",
-            daemon=True,
-        ).start()
+        return self._start_transfer(
+            self._software_update_tab,
+            source,
+            remote_directory,
+        )
 
-    def _remove_on_worker(self, job_id: str) -> None:
-        """Wait for controller removal away from Tk and publish its outcome."""
+    def _start_transfer(
+        self,
+        owner: UpdateTransferTab,
+        source: Path,
+        remote_directory: str,
+    ) -> TransferJob:
+        """Reserve the single transfer slot and associate it with its page."""
 
-        try:
-            was_removed = self._controller.remove(job_id)
-        except (RuntimeError, TimeoutError):
-            was_removed = False
-        self._operation_results.put(("remove", was_removed))
+        job = self._controller.start(source, remote_directory)
+        self._jobs[job.id] = job
+        self._job_owners[job.id] = owner
+        self._active_job_id = job.id
+        self._refresh_transfer_gates()
+        self._status_tray.show_connecting(job.source.name)
+        return job
 
     def _test_connection(
         self,
@@ -205,19 +265,20 @@ class WorkTransferWindow(ttk.Frame):
         self._controller.test_connection(config)
 
     def _connection_invalidated(self) -> None:
-        """Close the UI gate after session connection fields are edited."""
+        """Close the transfer gate after session connection fields are edited."""
 
         self._controller.invalidate_connection()
-        self._transfer_tab.set_connection_ready(False)
+        self._is_connection_ready = False
+        self._set_connection_health("disconnected")
+        self._refresh_transfer_gates()
 
     def _abort_transfer(self) -> None:
         """Request cancellation without blocking the Tk event loop."""
 
-        if self._active_job_id is not None:
-            source = self._jobs.get(self._active_job_id)
-            if source is not None:
-                self._status_tray.show_cancelling(source.name, self._queued_count())
-        # Cancellation cleanup belongs to the worker loop and may include remote I/O.
+        job = self._active_job()
+        if job is None:
+            return
+        self._status_tray.show_cancelling(job.source.name)
         threading.Thread(
             target=self._abort_on_worker,
             name="work-transfer-abort",
@@ -231,13 +292,14 @@ class WorkTransferWindow(ttk.Frame):
             was_aborted = self._controller.abort()
         except (RuntimeError, TimeoutError):
             was_aborted = False
-        self._operation_results.put(("abort", was_aborted))
+        self._abort_results.put(was_aborted)
 
     def _schedule_event_poll(self) -> None:
         """Poll transfer events at no more than four UI refreshes per second."""
 
         self._event_poll_id = self._tk_root.after(
-            _EVENT_POLL_MS, self._poll_controller_events
+            _EVENT_POLL_MS,
+            self._poll_controller_events,
         )
 
     def _poll_controller_events(self) -> None:
@@ -245,8 +307,9 @@ class WorkTransferWindow(ttk.Frame):
 
         if self._is_closing:
             return
-        # This polling boundary is the only path from worker threads into Tk widgets.
-        self._drain_operation_results()
+        self._drain_abort_results()
+        if self._drain_shutdown_results():
+            return
         while True:
             try:
                 event = self._controller.events.get_nowait()
@@ -255,253 +318,284 @@ class WorkTransferWindow(ttk.Frame):
             self._dispatch_event(event)
         self._schedule_event_poll()
 
-    def _drain_operation_results(self) -> None:
-        """Apply control-operation results produced outside the Tk thread."""
+    def _drain_abort_results(self) -> None:
+        """Restore status when a raced cancellation request was rejected."""
 
         while True:
             try:
-                operation, was_accepted = self._operation_results.get_nowait()
+                was_aborted = self._abort_results.get_nowait()
             except queue.Empty:
                 return
-            if operation == "remove" and not was_accepted:
-                self._transfer_tab.refresh_remove_action()
-            elif operation == "abort" and not was_accepted:
+            if not was_aborted:
                 self._restore_active_status()
 
+    def _drain_shutdown_results(self) -> bool:
+        """Finish closing or report a cleanup timeout from the worker thread."""
+
+        try:
+            error = self._shutdown_results.get_nowait()
+        except queue.Empty:
+            return False
+        if error is None:
+            self._is_closing = True
+            self._event_poll_id = None
+            self._tk_root.destroy()
+            return True
+
+        self._is_shutdown_pending = False
+        messagebox.showerror(
+            title=self._translator.t("dialogs.cleanup_title"),
+            message=self._translator.t("dialogs.cleanup_message"),
+            parent=self._tk_root,
+        )
+        return False
+
     def _restore_active_status(self) -> None:
-        """Restore active status if a raced cancellation request was rejected."""
+        """Restore connecting status after a rejected cancellation request."""
+
+        job = self._active_job()
+        if job is None:
+            self._status_tray.show_idle()
+        else:
+            self._status_tray.show_connecting(job.source.name)
+
+    def _active_job(self) -> TransferJob | None:
+        """Return the active job known to the UI, if one exists."""
 
         if self._active_job_id is None:
-            self._status_tray.show_idle(self._queued_count())
-            return
-        source = self._jobs.get(self._active_job_id)
-        if source is not None:
-            self._status_tray.show_connecting(source.name, self._queued_count())
+            return None
+        return self._jobs.get(self._active_job_id)
 
     def _dispatch_event(self, event: object) -> None:
         """Route a controller event to the smallest affected UI component."""
 
         if isinstance(event, ConnectionTestedEvent):
             self._handle_connection_tested(event.result)
-        elif isinstance(event, JobQueuedEvent):
-            self._handle_job_queued(event.job)
-        elif isinstance(event, JobRemovedEvent):
-            self._handle_job_removed(event.job_id)
         elif isinstance(event, TransferStateEvent):
-            self._handle_transfer_state(event.job_id, event.state.value)
+            self._handle_transfer_state(event)
         elif isinstance(event, TransferProgressEvent):
             self._handle_transfer_progress(event.progress)
         elif isinstance(event, TransferFinishedEvent):
-            self._handle_transfer_finished(event.result)
-        elif isinstance(event, QueuePausedEvent):
-            self._handle_queue_paused(event.reason, event.error_kind)
-        elif isinstance(event, QueueResumedEvent):
-            self._is_queue_paused = False
-            self._transfer_tab.show_error("")
+            self._handle_transfer_finished(event)
+        elif isinstance(event, ConnectionDegradedEvent):
+            self._handle_connection_degraded(event)
 
     def _handle_connection_tested(self, result: ConnectionTestResult) -> None:
-        """Update connection gating after an asynchronous test completes."""
+        """Update connection health and transfer gating after a test."""
 
         if result.is_stale:
             return
         if result.is_success:
             self._connection_tab.mark_tested(True)
-            self._transfer_tab.set_connection_ready(True)
-            if self._is_queue_paused:
-                if result.can_resume_queue:
-                    self._request_resume()
-                else:
-                    self._transfer_tab.show_error(
-                        self._translator.t("errors.queue_config_mismatch")
-                    )
+            self._is_connection_ready = True
+            self._set_connection_health("connected")
+            self._refresh_transfer_gates()
             return
 
-        message = self._connection_error_text(result.error_kind, result.message)
-        self._connection_tab.mark_tested(False, message)
-        self._transfer_tab.set_connection_ready(False)
-
-    def _request_resume(self) -> None:
-        """Ask the controller to resume without blocking the Tk event loop."""
-
-        threading.Thread(
-            target=self._resume_on_worker,
-            name="work-transfer-resume",
-            daemon=True,
-        ).start()
-
-    def _resume_on_worker(self) -> None:
-        """Resume paused transfer work without blocking the Tk event loop."""
-
-        try:
-            self._controller.resume()
-        except (RuntimeError, TimeoutError):
+        self._is_connection_ready = False
+        self._set_connection_health("disconnected")
+        self._refresh_transfer_gates()
+        if result.message == "connection_invalidated":
             return
-
-    def _connection_error_text(self, error_kind: TransferErrorKind, detail: str) -> str:
-        """Map stable backend error kinds to localized connection feedback."""
-
-        return localized_backend_message(
-            self._translator,
-            detail,
-            error_kind,
-            context="connection",
+        self._connection_tab.mark_tested(
+            False,
+            localized_backend_message(
+                self._translator,
+                result.message,
+                result.error_kind,
+                context="connection",
+            ),
         )
 
-    def _handle_job_queued(self, queued_job: TransferJob) -> None:
-        """Reconcile a queued event which was not inserted synchronously."""
+    def _handle_transfer_state(self, event: TransferStateEvent) -> None:
+        """Update the bottom tray for a non-terminal transfer state."""
 
-        if queued_job.id in self._jobs:
+        job = self._jobs.get(event.job_id)
+        if job is None or event.job_id != self._active_job_id:
             return
-        self._jobs[queued_job.id] = queued_job.source
-        self._job_states[queued_job.id] = "queued"
-        try:
-            size = queued_job.source.stat().st_size
-        except OSError:
-            size = 0
-        self._transfer_tab.add_item(
-            QueueItemView(
-                queued_job.id,
-                queued_job.source,
-                queued_job.remote_directory,
-                size,
-            )
-        )
-
-    def _handle_job_removed(self, job_id: str) -> None:
-        """Reconcile a controller-side removal with the visible queue."""
-
-        self._jobs.pop(job_id, None)
-        self._job_states.pop(job_id, None)
-        self._transfer_tab.remove_item(job_id)
-        if self._active_job_id is None:
-            self._status_tray.show_idle(self._queued_count())
-        if self._is_queue_paused:
-            # The controller accepts this only after all remaining snapshots match.
-            self._request_resume()
-
-    def _handle_transfer_state(self, job_id: str, state: str) -> None:
-        """Update queue and bottom tray for a non-terminal state transition."""
-
-        self._job_states[job_id] = state
-        self._transfer_tab.update_item_state(job_id, f"state.{state}")
-        source = self._jobs.get(job_id)
-        if state in {"connecting", "transferring", "cancelling"}:
-            self._active_job_id = job_id
-        if source is None:
-            return
-        if state == "cancelling":
-            self._status_tray.show_cancelling(source.name, self._queued_count())
-        elif state in {"connecting", "transferring"}:
-            self._status_tray.show_connecting(source.name, self._queued_count())
+        if event.state is TransferState.CANCELLING:
+            self._status_tray.show_cancelling(job.source.name)
+        elif event.state in {TransferState.CONNECTING, TransferState.TRANSFERRING}:
+            self._status_tray.show_connecting(job.source.name)
 
     def _handle_transfer_progress(self, snapshot: TransferProgress) -> None:
         """Render the newest byte snapshot in the persistent status tray."""
 
-        job_id = snapshot.job_id
-        source = self._jobs.get(job_id)
-        if source is None:
+        job = self._jobs.get(snapshot.job_id)
+        if job is None or snapshot.job_id != self._active_job_id:
             return
-        self._active_job_id = job_id
-        self._job_states[job_id] = "transferring"
         self._status_tray.show_progress(
-            filename=source.name,
+            filename=job.source.name,
             transferred_bytes=snapshot.transferred_bytes,
             total_bytes=snapshot.total_bytes,
             percent=snapshot.percent,
-            bytes_per_second=snapshot.bytes_per_second or 0.0,
+            bytes_per_second=snapshot.bytes_per_second,
             eta_seconds=snapshot.eta_seconds,
             is_stalled=snapshot.is_stalled,
-            queued_count=self._queued_count(),
         )
 
-    def _handle_transfer_finished(self, completed: TransferResult) -> None:
-        """Show a terminal result while allowing the next queued job to begin."""
+    def _handle_transfer_finished(self, event: TransferFinishedEvent) -> None:
+        """Finish one page-owned transfer and release the shared start gate."""
 
-        job_id = completed.job_id
-        state = completed.state.value
-        self._job_states[job_id] = state
-        self._transfer_tab.update_item_state(job_id, f"state.{state}")
-        if self._active_job_id == job_id:
+        result = event.result
+        job = self._jobs.pop(result.job_id, None)
+        owner = self._job_owners.pop(result.job_id, None)
+        if self._active_job_id == result.job_id:
             self._active_job_id = None
-        self._status_tray.show_result(f"state.{state}", self._queued_count())
-        if state == "failed":
-            self._transfer_tab.show_error(
+            self._refresh_transfer_gates()
+        self._status_tray.show_result(f"state.{result.state.value}")
+        if job is None or owner is None:
+            return
+        if result.is_success:
+            owner.record_completed(job)
+        elif result.state is TransferState.FAILED:
+            owner.show_error(
                 localized_backend_message(
                     self._translator,
-                    completed.message,
-                    completed.error_kind,
+                    result.message,
+                    result.error_kind,
                     context="transfer",
                 )
             )
 
-    def _handle_queue_paused(self, reason: str, error_kind: TransferErrorKind) -> None:
-        """Require a new connection test after a connection-wide failure."""
+    def _handle_connection_degraded(self, event: ConnectionDegradedEvent) -> None:
+        """Close the start gate when a transfer invalidates the tested session."""
 
-        self._is_queue_paused = True
-        reason_text = self._connection_error_text(error_kind, reason)
-        message = self._translator.t("errors.queue_paused", detail=reason_text)
-        self._connection_tab.mark_tested(False, message)
-        self._transfer_tab.set_connection_ready(False)
-        self._transfer_tab.show_error(message)
+        self._is_connection_ready = False
+        self._set_connection_health("degraded")
+        self._refresh_transfer_gates()
+        self._connection_tab.mark_tested(
+            False,
+            localized_backend_message(
+                self._translator,
+                event.reason,
+                event.error_kind,
+                context="connection",
+            ),
+        )
 
-    def _queued_count(self) -> int:
-        """Return only waiting items, excluding active and terminal rows."""
+    def _set_connection_health(self, state: str) -> None:
+        """Render one of the three supported connection-health states."""
 
-        return sum(state == "queued" for state in self._job_states.values())
+        style_suffix = {
+            "connected": "Connected",
+            "disconnected": "Disconnected",
+            "degraded": "Degraded",
+        }[state]
+        self._connection_health.configure(
+            text=self._translator.t(f"connection_health.{state}"),
+            style=f"Connection{style_suffix}.TLabel",
+        )
+
+    def _refresh_transfer_gates(self) -> None:
+        """Apply connection readiness and the single active-transfer slot."""
+
+        is_active = self._active_job_id is not None
+        for tab in (self._library_update_tab, self._software_update_tab):
+            tab.set_connection_ready(self._is_connection_ready)
+            tab.set_transfer_active(is_active)
 
     def _has_pending_work(self) -> bool:
-        """Return whether closing would interrupt queued or active work."""
+        """Return whether closing would interrupt an active transfer."""
 
-        return any(state not in _TERMINAL_STATES for state in self._job_states.values())
+        return self._active_job_id is not None
 
     def _close_requested(self) -> None:
         """Confirm destructive close, then cancel and clean up before exit."""
 
+        if self._is_shutdown_pending:
+            return
         if self._has_pending_work() and not messagebox.askyesno(
             title=self._translator.t("dialogs.close_title"),
             message=self._translator.t("dialogs.close_message"),
             parent=self._tk_root,
         ):
             return
-        self._is_closing = True
-        if self._event_poll_id is not None:
-            self._tk_root.after_cancel(self._event_poll_id)
-            self._event_poll_id = None
-        self._controller.shutdown(timeout=5.0)
-        self._tk_root.destroy()
+        self._is_shutdown_pending = True
+        self._is_connection_ready = False
+        self._set_connection_health("disconnected")
+        self._refresh_transfer_gates()
+        job = self._active_job()
+        if job is not None:
+            self._status_tray.show_cancelling(job.source.name)
+        threading.Thread(
+            target=self._shutdown_on_worker,
+            name="work-transfer-shutdown",
+            daemon=True,
+        ).start()
+
+    def _shutdown_on_worker(self) -> None:
+        """Wait for remote cleanup away from Tk and publish its outcome."""
+
+        error: BaseException | None = None
+        try:
+            self._controller.shutdown(timeout=5.0)
+        except (RuntimeError, TimeoutError) as caught:
+            error = caught
+        self._shutdown_results.put(error)
 
 
 def create_window(
     transfer_controller: TransferControllerLike | None = None,
     translator: TranslatorLike | None = None,
     settings: SettingsLike | None = None,
+    update_destinations: UpdateDestinations | None = None,
+    mock_tests: tuple[MockTestDefinition, ...] | None = None,
+    logo_path: Path | None = None,
 ) -> tk.Tk:
     """Create the production Ubuntu window with injectable application edges."""
 
-    from work_transfer_app.config import SettingsStore
+    from work_transfer_app.config import (
+        SettingsStore,
+        load_mock_tests,
+        load_update_destinations,
+    )
     from work_transfer_app.localization import Translator
-    from work_transfer_app.transfer import TransferQueueController
+    from work_transfer_app.transfer import TransferController
 
     settings_store = settings or SettingsStore()
     current_language = settings_store.load_language()
     active_translator = translator or Translator(current_language)
-    controller = transfer_controller or cast(
-        TransferControllerLike, TransferQueueController()
-    )
+    header_logo = prepare_header_logo(logo_path) if logo_path is not None else None
+    destinations = update_destinations or load_update_destinations()
+    configured_tests = mock_tests if mock_tests is not None else load_mock_tests()
+    owns_controller = transfer_controller is None
+    controller = transfer_controller
+    root: tk.Tk | None = None
 
-    root = tk.Tk()
-    root.title(active_translator.t("app.title"))
-    root.geometry("980x760")
-    root.minsize(820, 650)
-    root.columnconfigure(0, weight=1)
-    root.rowconfigure(0, weight=1)
-    configure_styles(root)
-    window = WorkTransferWindow(
-        root,
-        controller,
-        active_translator,
-        settings_store,
-        current_language,
-    )
-    window.focus_set()
-    return root
+    try:
+        root = tk.Tk()
+        root.title(active_translator.t("app.title"))
+        root.geometry("1080x760")
+        root.minsize(900, 650)
+        root.columnconfigure(0, weight=1)
+        root.rowconfigure(0, weight=1)
+        configure_styles(root)
+        if controller is None:
+            controller = cast(TransferControllerLike, TransferController())
+        window = WorkTransferWindow(
+            root,
+            controller,
+            active_translator,
+            settings_store,
+            current_language,
+            destinations,
+            configured_tests,
+            header_logo=header_logo,
+        )
+        window.focus_set()
+        return root
+    except BaseException as startup_error:
+        if owns_controller and controller is not None:
+            try:
+                controller.shutdown()
+            except (RuntimeError, TimeoutError) as cleanup_error:
+                startup_error.add_note(
+                    f"Controller cleanup also failed: {cleanup_error!r}"
+                )
+        if root is not None:
+            try:
+                root.destroy()
+            except tk.TclError as cleanup_error:
+                startup_error.add_note(f"Tk cleanup also failed: {cleanup_error!r}")
+        raise

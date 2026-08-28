@@ -5,6 +5,8 @@ description = "Proof-of-concept GUI for transferring files between Ubuntu comput
 requires-python = ">=3.12"
 dependencies = [
     "asyncssh",
+    "pillow",
+    "resvg-py",
 ]
 
 [project.scripts]

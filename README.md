@@ -2,14 +2,17 @@
 
 Work Transfer is a light-mode Ubuntu desktop application for sending files to
 another Ubuntu computer over SCP. It supports a tested session connection, a
-sequential transfer queue, live byte progress and ETA, and safe cancellation.
+single active update transfer, live byte progress and ETA, safe cancellation,
+and configurable demonstration tests.
 
 ## Interactive two-computer Docker demo
 
-The demo runs two isolated Ubuntu computers. Each side has the real Work
-Transfer GUI, its own OpenSSH receiver, and a browser-accessible desktop. On
-Windows, Docker Desktop must be using Linux containers; no local Python, SSH,
-or X server installation is required.
+The demo runs two isolated Ubuntu computers. Computer A shows the real Work
+Transfer GUI. Computer B shows a native graphical file manager already opened
+to `/home/demo/library-updates`, with OpenSSH running in the background to
+receive A's SCP transfer. Both desktops are browser-accessible. On Windows,
+Docker Desktop must be using Linux containers; no local Python, SSH, or X
+server installation is required.
 
 From PowerShell, Command Prompt, or another terminal in the repository, run:
 
@@ -32,10 +35,11 @@ SSH port: 22
 Private key: /home/demo/.ssh/demo_key
 ```
 
-Run **Test connection**, then select the sample file under
-`/home/demo/outgoing` and use `/home/demo/incoming` as the remote destination.
-Reverse the host names to send from B to A. The demo provisions keys,
-`known_hosts`, writable directories, and sample files automatically.
+Run **Test connection**, open **Library Update**, select the sample file under
+`/home/demo/outgoing`, and start the transfer. The receiving file appears under
+`/home/demo/library-updates` in Computer B's open file manager. The demo
+provisions the SSH keys, strict `known_hosts` entry, configured update
+directories, and Computer A's sample file automatically.
 
 Stop the demo with `Ctrl+C`, then remove its containers:
 
@@ -131,11 +135,11 @@ On the sending computer, create a dedicated key and authorize it on the
 receiver. Replace `<remote-user>` with the receiver's Ubuntu username.
 
 ```bash
-ssh-keygen -t ed25519 -f "$HOME/.ssh/work_transfer"
+ssh-keygen -q -t ed25519 -N "" -f "$HOME/.ssh/work_transfer"
 ssh-copy-id -i "$HOME/.ssh/work_transfer.pub" \
   <remote-user>@192.168.50.2
-ssh -i "$HOME/.ssh/work_transfer" <remote-user>@192.168.50.2
-mkdir -p "$HOME/incoming"
+ssh -i "$HOME/.ssh/work_transfer" <remote-user>@192.168.50.2 \
+  'mkdir -p "$HOME/library-updates" "$HOME/software-updates"'
 ```
 
 The first `ssh` connection records the receiver in `known_hosts`, which the app
@@ -145,17 +149,38 @@ requires for strict host verification.
 
 1. In **Connection**, enter the receiver, username, SSH port, and private key,
    then run **Test connection**.
-2. In **Transfer**, select a file and destination directory and add it to the
-   queue.
+2. In **Library Update** or **SW Update**, select one file and start the
+   transfer. The destination is fixed by `work_transfer_app/config/updates.toml`.
 3. Follow progress, throughput, and ETA in the persistent bottom tray. Abort
-   cancels the current file, cleans its temporary remote file, and continues
-   with the next queued item.
-4. In **Settings**, choose a startup language. Language changes apply after a
+   cancels the active transfer and cleans its temporary remote file.
+4. Review successfully transferred files in the selected update page's
+   session history.
+5. In **Test**, run the mock diagnostics defined in
+   `work_transfer_app/config/tests.toml`. Each finishes independently after
+   1-5 seconds with a ten-percent failure probability.
+6. In **Settings**, choose a startup language. Language changes apply after a
    restart.
 
-All displayed text comes from JSON catalogs under
+To add optional header branding, pass an SVG or common raster image when the
+application starts:
+
+```bash
+work-transfer --logo /absolute/path/to/company-logo.svg
+```
+
+SVG, PNG, JPEG, GIF, and WebP files are accepted. The title remains visible
+beside the logo. Logo input is limited to 5 MiB encoded, 4096 pixels per raster
+side, and 16 million decoded pixels; SVG active content and external resources
+are rejected.
+
+Static interface text comes from JSON catalogs under
 `work_transfer_app/localization/languages/`. Edit or add a catalog and rebuild
-the executable to change UI text.
+the executable to change UI text. Mock-test names are operational configuration
+and come directly from `work_transfer_app/config/tests.toml`.
+
+Fixed Library Update and SW Update destinations come from
+`work_transfer_app/config/updates.toml`. Both directories must already exist on
+the receiving computer and must be writable by the SSH user.
 
 All interface colors come from `work_transfer_app/ui/theme.toml`. Palette
 values are RGB triples, and semantic roles in the same file select which

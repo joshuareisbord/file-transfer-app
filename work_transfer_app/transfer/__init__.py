@@ -5,15 +5,12 @@ from work_transfer_app.transfer.backend import (
     ScpTransferBackend,
     TransferBackend,
 )
-from work_transfer_app.transfer.controller import TransferQueueController
+from work_transfer_app.transfer.controller import TransferController
 from work_transfer_app.transfer.models import (
     ConnectionConfig,
+    ConnectionDegradedEvent,
     ConnectionTestedEvent,
     ConnectionTestResult,
-    JobQueuedEvent,
-    JobRemovedEvent,
-    QueuePausedEvent,
-    QueueResumedEvent,
     TransferErrorKind,
     TransferEvent,
     TransferFinishedEvent,
@@ -27,22 +24,19 @@ from work_transfer_app.transfer.models import (
 
 __all__ = [
     "ConnectionConfig",
+    "ConnectionDegradedEvent",
     "ConnectionTestResult",
     "ConnectionTestedEvent",
-    "JobQueuedEvent",
-    "JobRemovedEvent",
     "ProgressCallback",
-    "QueuePausedEvent",
-    "QueueResumedEvent",
     "ScpTransferBackend",
     "TransferBackend",
+    "TransferController",
     "TransferErrorKind",
     "TransferEvent",
     "TransferFinishedEvent",
     "TransferJob",
     "TransferProgress",
     "TransferProgressEvent",
-    "TransferQueueController",
     "TransferResult",
     "TransferState",
     "TransferStateEvent",

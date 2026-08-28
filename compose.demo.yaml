@@ -46,7 +46,6 @@ services:
     hostname: computer-b
     environment:
       DEMO_SIDE: computer-b
-      PEER_HOST: computer-a
     ports:
       # DEMO ONLY: noVNC has no password, so never bind this beyond localhost.
       - "127.0.0.1:${COMPUTER_B_PORT:-6082}:6080"

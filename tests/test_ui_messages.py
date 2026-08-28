@@ -25,9 +25,12 @@ class RecordingTranslator:
     ("token", "translation_key"),
     [
         ("source_file_missing", "errors.source_file_missing"),
-        ("destination_file_exists", "errors.destination_file_exists"),
+        ("destination_file_exists", "errors.remote_file_exists"),
         ("identity_file_missing", "errors.identity_file_missing"),
         ("known_hosts_missing", "errors.known_hosts_missing"),
+        ("connection_not_tested", "connection.test_required"),
+        ("transfer_active", "errors.transfer_active"),
+        ("invalid_remote_directory", "errors.remote_directory_invalid"),
     ],
 )
 def test_stable_backend_tokens_are_translated_without_raw_detail(
@@ -79,7 +82,7 @@ def test_stable_backend_tokens_are_translated_without_raw_detail(
 )
 def test_failure_categories_choose_a_localized_surface(
     kind: TransferErrorKind,
-    context: Literal["connection", "queue", "transfer"],
+    context: Literal["connection", "transfer"],
     message: str,
     expected: tuple[str, dict[str, object]],
 ) -> None:

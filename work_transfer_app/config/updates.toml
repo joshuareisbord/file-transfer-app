@@ -1,0 +1,3 @@
+[destinations]
+library_update = "~/library-updates"
+software_update = "~/software-updates"

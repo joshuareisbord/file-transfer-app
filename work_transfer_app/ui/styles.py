@@ -38,6 +38,12 @@ def configure_styles(root: tk.Tk, theme: ColorTheme | None = None) -> None:
         relief="solid",
     )
     style.configure(
+        "HeaderContent.TFrame",
+        background=color("header"),
+        borderwidth=0,
+        relief="flat",
+    )
+    style.configure(
         "StatusTray.TFrame",
         background=color("status_surface"),
         bordercolor=color("border"),
@@ -108,6 +114,48 @@ def configure_styles(root: tk.Tk, theme: ColorTheme | None = None) -> None:
         background=color("status_surface"),
         foreground=color("status_meta"),
     )
+    for style_name, background_role, foreground_role in (
+        (
+            "ConnectionConnected.TLabel",
+            "connection_connected",
+            "connection_connected_text",
+        ),
+        (
+            "ConnectionDisconnected.TLabel",
+            "connection_disconnected",
+            "connection_disconnected_text",
+        ),
+        (
+            "ConnectionDegraded.TLabel",
+            "connection_degraded",
+            "connection_degraded_text",
+        ),
+    ):
+        style.configure(
+            style_name,
+            background=color(background_role),
+            foreground=color(foreground_role),
+            bordercolor=color("border"),
+            borderwidth=1,
+            relief="solid",
+            padding=(10, 5),
+            font=("DejaVu Sans", 9, "bold"),
+        )
+    for style_name, background_role, foreground_role in (
+        ("TestNotRun.TLabel", "test_not_run", "test_not_run_text"),
+        ("TestRunning.TLabel", "test_running", "test_running_text"),
+        ("TestPass.TLabel", "test_pass", "test_pass_text"),
+        ("TestFail.TLabel", "test_fail", "test_fail_text"),
+    ):
+        style.configure(
+            style_name,
+            background=color(background_role),
+            foreground=color(foreground_role),
+            bordercolor=color("border"),
+            borderwidth=1,
+            relief="solid",
+            padding=(2, 4),
+        )
 
     style.configure(
         "TButton",
@@ -154,8 +202,15 @@ def configure_styles(root: tk.Tk, theme: ColorTheme | None = None) -> None:
     )
     style.map(
         "Danger.TButton",
-        background=[("active", color("danger_active"))],
-        foreground=[("active", color("danger_active_text"))],
+        background=[
+            ("active", color("danger_active")),
+            ("disabled", color("disabled")),
+        ],
+        foreground=[
+            ("active", color("danger_active_text")),
+            ("disabled", color("disabled_text")),
+        ],
+        bordercolor=[("disabled", color("border"))],
     )
 
     style.configure(
@@ -212,14 +267,13 @@ def configure_styles(root: tk.Tk, theme: ColorTheme | None = None) -> None:
     style.map(
         "TNotebook.Tab",
         background=[
-            ("selected", color("surface")),
+            ("selected", color("tab_selected")),
             ("active", color("tab_active")),
         ],
         foreground=[
-            ("selected", color("primary_action")),
+            ("selected", color("tab_selected_text")),
             ("active", color("tab_active_text")),
         ],
-        expand=[("selected", (0, 0, 0, 1))],
     )
     style.configure(
         "Transfer.Horizontal.TProgressbar",

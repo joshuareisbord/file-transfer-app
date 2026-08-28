@@ -33,10 +33,9 @@ class TransferStatusTray(ttk.Frame):
         self._transferred = tk.StringVar(self)
         self._rate = tk.StringVar(self)
         self._eta = tk.StringVar(self)
-        self._queued = tk.StringVar(self)
         self._progress_value = tk.DoubleVar(self, value=0.0)
         self._build()
-        self.show_idle(0)
+        self.show_idle()
 
     def _build(self) -> None:
         """Lay out progress information with stable geometry across states."""
@@ -55,11 +54,6 @@ class TransferStatusTray(ttk.Frame):
             textvariable=self._state,
             style="StatusState.TLabel",
         ).grid(row=0, column=1, sticky="e", padx=(14, 0))
-        ttk.Label(
-            summary,
-            textvariable=self._queued,
-            style="StatusMeta.TLabel",
-        ).grid(row=0, column=2, sticky="e", padx=(18, 0))
 
         progress_row = ttk.Frame(self, style="StatusContent.TFrame")
         progress_row.grid(row=1, column=0, sticky="ew", pady=(8, 0))
@@ -100,19 +94,18 @@ class TransferStatusTray(ttk.Frame):
             style="StatusMeta.TLabel",
         ).grid(row=0, column=2, sticky="w", padx=(20, 0))
 
-    def show_idle(self, queued_count: int) -> None:
-        """Restore the ready state while retaining the queued count."""
+    def show_idle(self) -> None:
+        """Restore the ready state when no transfer is active."""
 
         self._filename.set(self._translator.t("status.idle"))
         self._state.set("")
         self._transferred.set("")
         self._rate.set("")
         self._eta.set("")
-        self._queued.set(self._translator.t("status.queued", count=queued_count))
         self._progress_value.set(0.0)
         self._abort_button.state(["disabled"])
 
-    def show_connecting(self, filename: str, queued_count: int) -> None:
+    def show_connecting(self, filename: str) -> None:
         """Show the active file while its SSH connection is opening."""
 
         self._filename.set(self._translator.t("status.filename", filename=filename))
@@ -125,7 +118,6 @@ class TransferStatusTray(ttk.Frame):
                 eta=self._translator.t("status.eta_calculating"),
             )
         )
-        self._queued.set(self._translator.t("status.queued", count=queued_count))
         self._progress_value.set(0.0)
         self._abort_button.state(["!disabled"])
 
@@ -136,10 +128,9 @@ class TransferStatusTray(ttk.Frame):
         transferred_bytes: int,
         total_bytes: int,
         percent: float,
-        bytes_per_second: float,
+        bytes_per_second: float | None,
         eta_seconds: float | None,
         is_stalled: bool,
-        queued_count: int,
     ) -> None:
         """Display a bounded snapshot from the background transfer worker."""
 
@@ -155,7 +146,7 @@ class TransferStatusTray(ttk.Frame):
                 total=format_byte_count(total_bytes, self._translator),
             )
         )
-        self._rate.set(format_transfer_rate(bytes_per_second, self._translator))
+        self._rate.set(format_transfer_rate(bytes_per_second or 0.0, self._translator))
         self._eta.set(
             self._translator.t(
                 "status.eta",
@@ -166,23 +157,24 @@ class TransferStatusTray(ttk.Frame):
                 ),
             )
         )
-        self._queued.set(self._translator.t("status.queued", count=queued_count))
         self._progress_value.set(safe_percent)
         self._abort_button.state(["!disabled"])
 
-    def show_cancelling(self, filename: str, queued_count: int) -> None:
+    def show_cancelling(self, filename: str) -> None:
         """Disable repeated cancellation while cleanup is in progress."""
 
         self._filename.set(self._translator.t("status.filename", filename=filename))
         self._state.set(self._translator.t("state.cancelling"))
-        self._queued.set(self._translator.t("status.queued", count=queued_count))
         self._abort_button.state(["disabled"])
 
-    def show_result(self, state_key: str, queued_count: int) -> None:
+    def show_result(self, state_key: str) -> None:
         """Show a terminal state until the next worker event arrives."""
 
         self._state.set(self._translator.t(state_key))
-        self._queued.set(self._translator.t("status.queued", count=queued_count))
+        self._rate.set("")
+        self._eta.set("")
+        if state_key == "state.completed":
+            self._progress_value.set(100.0)
         self._abort_button.state(["disabled"])
 
     def _abort(self) -> None:

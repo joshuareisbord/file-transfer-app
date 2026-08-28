@@ -28,6 +28,15 @@ def test_default_theme_loads_supplied_rgb_palette_and_semantic_roles() -> None:
     assert theme.color("danger") == "#BC2026"
     assert theme.color("success") == "#4B5126"
     assert theme.color("active_accent") == "#E4592D"
+    assert theme.color("tab_selected") == "#E7DBC4"
+    assert theme.color("tab_selected_text") == "#0A0A0A"
+    assert theme.color("connection_connected") == "#4B5126"
+    assert theme.color("connection_disconnected") == "#BC2026"
+    assert theme.color("connection_degraded") == "#E4592D"
+    assert theme.color("test_not_run") == "#E7DBC4"
+    assert theme.color("test_running") == "#E4592D"
+    assert theme.color("test_pass") == "#4B5126"
+    assert theme.color("test_fail") == "#BC2026"
     assert set(theme.roles.values()) <= set(theme.palette.values())
 
 

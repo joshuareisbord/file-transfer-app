@@ -26,7 +26,7 @@ ProgressCallback = Callable[[TransferProgress], None]
 
 
 class TransferBackend(Protocol):
-    """Backend contract consumed by the sequential queue controller."""
+    """Backend contract consumed by the single-transfer controller."""
 
     async def test_connection(self, config: ConnectionConfig) -> ConnectionTestResult:
         """Validate credentials and establish a connection once."""
@@ -111,7 +111,7 @@ class _LocalConfigError(Exception):
     """Configuration failure with a stable transfer error category."""
 
     def __init__(self, message: str, error_kind: TransferErrorKind) -> None:
-        """Retain a local error key and its queue behavior category."""
+        """Retain a local error key and its transfer error category."""
 
         super().__init__(message)
         self.error_kind = error_kind
@@ -346,7 +346,7 @@ class ScpTransferBackend:
 
     @staticmethod
     def _error_kind(error: Exception, *, connected: bool = False) -> TransferErrorKind:
-        """Map AsyncSSH and network errors to stable queue behavior."""
+        """Map AsyncSSH and network errors to stable transfer behavior."""
 
         if isinstance(error, asyncssh.PermissionDenied):
             return TransferErrorKind.AUTHENTICATION

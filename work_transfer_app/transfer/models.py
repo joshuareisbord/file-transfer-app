@@ -9,9 +9,8 @@ from uuid import uuid4
 
 
 class TransferState(StrEnum):
-    """Lifecycle states for one queued transfer."""
+    """Lifecycle states for one transfer."""
 
-    QUEUED = "queued"
     CONNECTING = "connecting"
     TRANSFERRING = "transferring"
     CANCELLING = "cancelling"
@@ -21,7 +20,7 @@ class TransferState(StrEnum):
 
 
 class TransferErrorKind(StrEnum):
-    """Stable failure categories used to decide whether a queue must pause."""
+    """Stable failure categories used across the backend and interface."""
 
     NONE = "none"
     FILE = "file"
@@ -31,8 +30,8 @@ class TransferErrorKind(StrEnum):
     UNKNOWN = "unknown"
 
     @property
-    def pauses_queue(self) -> bool:
-        """Return whether this failure invalidates subsequent connection work."""
+    def degrades_connection(self) -> bool:
+        """Return whether this failure invalidates the tested connection."""
 
         return self in {
             TransferErrorKind.AUTHENTICATION,
@@ -43,7 +42,7 @@ class TransferErrorKind(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ConnectionConfig:
-    """SSH settings whose value is snapshotted into every queued job."""
+    """SSH settings whose value is snapshotted into every transfer."""
 
     host: str
     username: str
@@ -79,7 +78,6 @@ class ConnectionTestResult:
     message: str = ""
     error_kind: TransferErrorKind = TransferErrorKind.NONE
     is_stale: bool = False
-    can_resume_queue: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,20 +164,6 @@ class ConnectionTestedEvent:
 
 
 @dataclass(frozen=True, slots=True)
-class JobQueuedEvent:
-    """Notify observers that a waiting job was accepted."""
-
-    job: TransferJob
-
-
-@dataclass(frozen=True, slots=True)
-class JobRemovedEvent:
-    """Notify observers that a waiting job was removed."""
-
-    job_id: str
-
-
-@dataclass(frozen=True, slots=True)
 class TransferStateEvent:
     """Notify observers of a non-terminal job state transition."""
 
@@ -203,25 +187,17 @@ class TransferFinishedEvent:
 
 
 @dataclass(frozen=True, slots=True)
-class QueuePausedEvent:
-    """Notify observers that a connection failure paused pending work."""
+class ConnectionDegradedEvent:
+    """Notify observers that a transfer invalidated the tested connection."""
 
     reason: str
     error_kind: TransferErrorKind
 
 
-@dataclass(frozen=True, slots=True)
-class QueueResumedEvent:
-    """Notify observers that pending work may start again."""
-
-
 type TransferEvent = (
     ConnectionTestedEvent
-    | JobQueuedEvent
-    | JobRemovedEvent
     | TransferStateEvent
     | TransferProgressEvent
     | TransferFinishedEvent
-    | QueuePausedEvent
-    | QueueResumedEvent
+    | ConnectionDegradedEvent
 )

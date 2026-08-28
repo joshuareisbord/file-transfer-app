@@ -39,6 +39,7 @@ RUN uv run pyinstaller \
     --onefile \
     --name work-transfer \
     --collect-data work_transfer_app \
+    --hidden-import PIL._tkinter_finder \
     --distpath /output \
     --workpath /tmp/work-transfer-build \
     --specpath /tmp \
@@ -69,6 +70,7 @@ RUN apt-get install --yes --no-install-recommends \
     openbox \
     openssh-client \
     openssh-server \
+    pcmanfm \
     tini \
     util-linux \
     websockify \
@@ -85,6 +87,9 @@ RUN install -d -m 700 -o demo -g demo /home/demo/.ssh
 COPY --from=builder /output/work-transfer /usr/local/bin/work-transfer
 COPY --chmod=755 packaging/demo/desktop.sh /usr/local/bin/demo-desktop
 COPY --chmod=755 packaging/demo/side-entrypoint.sh /usr/local/bin/demo-side-entrypoint
+RUN install -d -m 755 /usr/local/share/work-transfer
+COPY --chmod=644 packaging/demo/work-transfer-mark.svg \
+    /usr/local/share/work-transfer/work-transfer-mark.svg
 
 EXPOSE 22 6080
 

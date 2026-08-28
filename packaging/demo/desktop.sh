@@ -7,6 +7,15 @@ export LOGNAME=demo
 export USER=demo
 export XDG_CONFIG_HOME="$HOME/.config"
 export XDG_RUNTIME_DIR=/tmp/work-transfer-demo-runtime
+readonly side="${1:?Demo side is required}"
+
+case "$side" in
+    computer-a|computer-b) ;;
+    *)
+        echo "Demo side must be computer-a or computer-b" >&2
+        exit 2
+        ;;
+esac
 
 install -d -m 700 "$XDG_CONFIG_HOME" "$XDG_RUNTIME_DIR"
 
@@ -28,7 +37,12 @@ fi
 
 openbox &
 window_manager_pid=$!
-/usr/local/bin/work-transfer &
+if [[ "$side" == "computer-a" ]]; then
+    /usr/local/bin/work-transfer \
+        --logo /usr/local/share/work-transfer/work-transfer-mark.svg &
+else
+    pcmanfm --no-desktop "$HOME/library-updates" &
+fi
 application_pid=$!
 
 # DEMO ONLY: x11vnc intentionally has no password. Compose publishes only the
