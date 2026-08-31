@@ -191,13 +191,17 @@ def test_shell_supports_five_tabs_single_transfer_history_and_health(
             for child in window.winfo_children()
             if isinstance(child, TransferStatusTray)
         )
-        assert [notebook.tab(tab_id, "text") for tab_id in notebook.tabs()] == [
-            "Library Update",
-            "SW Update",
-            "Test",
-            "Connection",
-            "Settings",
+        tab_texts = [
+            translator.t(key)
+            for key in (
+                "tabs.library_update",
+                "tabs.software_update",
+                "tabs.test",
+                "tabs.connection",
+                "tabs.settings",
+            )
         ]
+        assert [notebook.tab(tab_id, "text") for tab_id in notebook.tabs()] == tab_texts
         logo_label = next(
             child
             for child in _descendants(window)
@@ -208,10 +212,7 @@ def test_shell_supports_five_tabs_single_transfer_history_and_health(
         assert logo_label.cget("borderwidth") == 0
         assert logo_label.cget("highlightthickness") == 0
 
-        for shortcut, expected in enumerate(
-            ("Library Update", "SW Update", "Test", "Connection", "Settings"),
-            start=1,
-        ):
+        for shortcut, expected in enumerate(tab_texts, start=1):
             window.event_generate(f"<Control-Key-{shortcut}>")
             root.update()
             assert notebook.tab(notebook.select(), "text") == expected
@@ -221,7 +222,7 @@ def test_shell_supports_five_tabs_single_transfer_history_and_health(
             for child in _descendants(window)
             if isinstance(child, ttk.Label)
         ]
-        assert "Disconnected" in rendered_labels
+        assert translator.t("connection_health.disconnected") in rendered_labels
 
         controller.events.put(
             ConnectionTestedEvent(ConnectionTestResult(connection, True))
@@ -229,7 +230,7 @@ def test_shell_supports_five_tabs_single_transfer_history_and_health(
         _pump_until(
             root,
             lambda: (
-                "Connected"
+                translator.t("connection_health.connected")
                 in [
                     _label_text(child)
                     for child in _descendants(window)
@@ -244,13 +245,22 @@ def test_shell_supports_five_tabs_single_transfer_history_and_health(
             "work_transfer_app.ui.tabs.filedialog.askopenfilename",
             lambda **_kwargs: str(source),
         )
-        _find_button(library_tab, "Browse").invoke()
-        _find_button(library_tab, "Start library update").invoke()
+        _find_button(library_tab, translator.t("common.browse")).invoke()
+        _find_button(
+            library_tab,
+            translator.t("library_update.start_transfer"),
+        ).invoke()
         root.update()
 
         assert controller.start_calls == [(source.resolve(), "~/library-updates")]
-        assert _find_button(library_tab, "Start library update").instate(["disabled"])
-        assert _find_button(software_tab, "Start software update").instate(["disabled"])
+        assert _find_button(
+            library_tab,
+            translator.t("library_update.start_transfer"),
+        ).instate(["disabled"])
+        assert _find_button(
+            software_tab,
+            translator.t("software_update.start_transfer"),
+        ).instate(["disabled"])
 
         controller.events.put(TransferStateEvent("job-1", TransferState.TRANSFERRING))
         controller.events.put(
@@ -265,13 +275,13 @@ def test_shell_supports_five_tabs_single_transfer_history_and_health(
                 )
             )
         )
-        abort_button = _find_button(tray, "Abort")
+        abort_button = _find_button(tray, translator.t("common.abort"))
         _pump_until(root, lambda: abort_button.instate(["!disabled"]))
         abort_button.invoke()
         _pump_until(root, controller.abort_started.is_set)
         window.event_generate("<Control-Key-5>")
         root.update()
-        assert notebook.tab(notebook.select(), "text") == "Settings"
+        assert notebook.tab(notebook.select(), "text") == translator.t("tabs.settings")
         assert controller.allow_abort.is_set() is False
 
         controller.allow_abort.set()
@@ -279,7 +289,9 @@ def test_shell_supports_five_tabs_single_transfer_history_and_health(
             TransferFinishedEvent(TransferResult("job-1", TransferState.COMPLETED))
         )
         _pump_until(root, lambda: bool(_history_rows(library_tab)))
-        assert _history_rows(library_tab) == [("library-update.bin", "Completed")]
+        assert _history_rows(library_tab) == [
+            ("library-update.bin", translator.t("state.completed"))
+        ]
         assert _history_rows(software_tab) == []
 
         controller.events.put(
@@ -288,7 +300,7 @@ def test_shell_supports_five_tabs_single_transfer_history_and_health(
         _pump_until(
             root,
             lambda: (
-                "Degraded"
+                translator.t("connection_health.degraded")
                 in [
                     _label_text(child)
                     for child in _descendants(window)
@@ -296,7 +308,10 @@ def test_shell_supports_five_tabs_single_transfer_history_and_health(
                 ]
             ),
         )
-        assert _find_button(library_tab, "Start library update").instate(["disabled"])
+        assert _find_button(
+            library_tab,
+            translator.t("library_update.start_transfer"),
+        ).instate(["disabled"])
     finally:
         if controller is not None:
             controller.allow_abort.set()
@@ -344,10 +359,11 @@ def test_close_timeout_keeps_window_open_and_reports_cleanup(
     try:
         configure_styles(root)
         settings = SettingsStore(path=tmp_path / "settings.json")
+        translator = Translator()
         window = WorkTransferWindow(
             root,
             controller,
-            Translator(),
+            translator,
             settings,
             settings.load_language(),
             UpdateDestinations("~/library-updates", "~/software-updates"),
@@ -361,11 +377,8 @@ def test_close_timeout_keeps_window_open_and_reports_cleanup(
         _pump_until(root, lambda: bool(messages))
         assert messages == [
             (
-                "Cleanup incomplete",
-                (
-                    "Work Transfer is still cleaning the incomplete remote file. "
-                    "Wait, then close the application again."
-                ),
+                translator.t("dialogs.cleanup_title"),
+                translator.t("dialogs.cleanup_message"),
             )
         ]
         assert root.winfo_exists() == 1

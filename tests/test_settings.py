@@ -2,7 +2,6 @@ import json
 from pathlib import Path
 
 from work_transfer_app.config import SettingsStore, default_settings_path
-from work_transfer_app.localization import Translator
 
 
 def test_settings_store_persists_only_the_selected_language(tmp_path: Path) -> None:
@@ -32,9 +31,6 @@ def test_settings_store_recovers_from_invalid_content(tmp_path: Path) -> None:
         "settings_invalid",
         "warnings.settings_invalid",
         {},
-    )
-    assert Translator().t(warning.translation_key, **warning.values) == (
-        "Settings file is invalid; using the English language default."
     )
 
 

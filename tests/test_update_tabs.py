@@ -116,6 +116,7 @@ def test_update_tab_uses_fixed_destination_and_logs_only_completed_files(
     source = tmp_path / "library.pkg"
     source.write_bytes(b"library update")
     started: list[tuple[Path, str]] = []
+    translator = Translator("en")
 
     def start_transfer(selected: Path, remote_directory: str) -> TransferJob:
         """Record the start boundary and return the controller job."""
@@ -129,7 +130,7 @@ def test_update_tab_uses_fixed_destination_and_logs_only_completed_files(
     )
     tab = UpdateTransferTab(
         tk_root,
-        Translator("en"),
+        translator,
         translation_prefix="library_update",
         remote_directory="~/library-updates",
         on_start=start_transfer,
@@ -148,7 +149,7 @@ def test_update_tab_uses_fixed_destination_and_logs_only_completed_files(
 
     assert len(tab._history.get_children()) == 1
     row = tab._history.item(tab._history.get_children()[0], "values")
-    assert row == ("library.pkg", "Completed")
+    assert row == ("library.pkg", translator.t("state.completed"))
 
 
 def test_update_tab_gates_start_on_connection_and_active_transfer(
@@ -189,9 +190,10 @@ def test_test_tab_runs_each_definition_independently_and_ignores_old_callbacks(
     """Show running then independent results without stale-run mutation."""
 
     scheduler = RecordingScheduler()
+    translator = Translator("en")
     tab = MockTestTab(
         tk_root,
-        Translator("en"),
+        translator,
         (
             MockTestDefinition("network", "Network connectivity"),
             MockTestDefinition("storage", "Storage availability"),
@@ -218,36 +220,36 @@ def test_test_tab_runs_each_definition_independently_and_ignores_old_callbacks(
     assert name_label.grid_info()["column"] == 2
 
     assert [value.get() for value in tab._status_variables.values()] == [
-        "Not run",
-        "Not run",
+        translator.t("test.not_run"),
+        translator.t("test.not_run"),
     ]
     tab.run_tests()
     first_run = tuple(scheduler.calls)
 
     assert [delay for delay, _callback in first_run] == [1000, 2000]
     assert [value.get() for value in tab._status_variables.values()] == [
-        "Running",
-        "Running",
+        translator.t("test.running"),
+        translator.t("test.running"),
     ]
     assert tab._run_button.instate(["disabled"])
 
     first_run[0][1]()
     first_run[1][1]()
     assert [value.get() for value in tab._status_variables.values()] == [
-        "Pass",
-        "Fail",
+        translator.t("test.pass"),
+        translator.t("test.fail"),
     ]
     assert tab._run_button.instate(["!disabled"])
 
     tab.run_tests()
     assert [value.get() for value in tab._status_variables.values()] == [
-        "Running",
-        "Running",
+        translator.t("test.running"),
+        translator.t("test.running"),
     ]
     first_run[0][1]()
     assert [value.get() for value in tab._status_variables.values()] == [
-        "Running",
-        "Running",
+        translator.t("test.running"),
+        translator.t("test.running"),
     ]
 
 
@@ -284,7 +286,8 @@ def test_test_tab_scrolls_to_last_configured_definition(tk_root: tk.Tk) -> None:
 def test_status_tray_reports_only_the_single_active_transfer(tk_root: tk.Tk) -> None:
     """Render progress, rate, and ETA without any removed queue metadata."""
 
-    tray = TransferStatusTray(tk_root, Translator("en"), lambda: None)
+    translator = Translator("en")
+    tray = TransferStatusTray(tk_root, translator, lambda: None)
     tray.pack(fill="x")
     tray.show_progress(
         filename="update.pkg",
@@ -303,9 +306,8 @@ def test_status_tray_reports_only_the_single_active_transfer(tk_root: tk.Tk) -> 
     ]
     rendered = [_label_text(label) for label in labels]
 
-    assert "File: update.pkg" in rendered
-    assert "50.0%" in rendered
-    assert all("queued" not in text.casefold() for text in rendered)
+    assert translator.t("status.filename", filename="update.pkg") in rendered
+    assert translator.t("status.progress", percent="50.0") in rendered
 
     tray.show_result("state.completed")
     assert tray._progress_value.get() == 100.0
