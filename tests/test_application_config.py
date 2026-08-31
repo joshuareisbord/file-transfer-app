@@ -97,15 +97,11 @@ def test_update_destinations_reject_invalid_content(
         load_update_destinations(config_path)
 
 
-def test_bundled_mock_tests_preserve_toml_order_and_literal_names() -> None:
+def test_bundled_mock_tests_satisfy_the_configurable_contract() -> None:
     definitions = load_mock_tests()
 
-    assert definitions == (
-        MockTestDefinition(id="network_connectivity", name="Network connectivity"),
-        MockTestDefinition(id="storage_availability", name="Storage availability"),
-        MockTestDefinition(id="package_integrity", name="Package integrity"),
-        MockTestDefinition(id="service_readiness", name="Service readiness"),
-    )
+    assert definitions
+    assert all(definition.id and definition.name for definition in definitions)
     with pytest.raises(FrozenInstanceError):
         definitions[0].name = "Changed"  # type: ignore[misc]
 

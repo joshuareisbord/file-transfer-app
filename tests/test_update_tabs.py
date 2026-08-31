@@ -195,25 +195,26 @@ def test_test_tab_runs_each_definition_independently_and_ignores_old_callbacks(
         tk_root,
         translator,
         (
-            MockTestDefinition("network", "Network connectivity"),
-            MockTestDefinition("storage", "Storage availability"),
+            MockTestDefinition("fixture_alpha", "Fixture alpha"),
+            MockTestDefinition("fixture_beta", "Fixture beta"),
         ),
         random_source=SequenceRandom(),
         scheduler=scheduler,
     )
     tab.pack(fill="both", expand=True)
 
-    status_box = tab._status_boxes["network"]
+    status_box = tab._status_boxes["fixture_alpha"]
     result_label = next(
         child
         for child in status_box.master.winfo_children()
         if isinstance(child, ttk.Label)
-        and str(child.cget("textvariable")) == str(tab._status_variables["network"])
+        and str(child.cget("textvariable"))
+        == str(tab._status_variables["fixture_alpha"])
     )
     name_label = next(
         child
         for child in status_box.master.winfo_children()
-        if isinstance(child, ttk.Label) and child.cget("text") == "Network connectivity"
+        if isinstance(child, ttk.Label) and child.cget("text") == "Fixture alpha"
     )
     assert status_box.grid_info()["column"] == 0
     assert result_label.grid_info()["column"] == 1
