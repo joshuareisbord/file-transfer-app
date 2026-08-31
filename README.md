@@ -20,17 +20,7 @@ From PowerShell, Command Prompt, or another terminal in the repository, run:
 docker compose --file compose.demo.yaml up --build
 ```
 
-In a second terminal, read each generated desktop password:
-
-```bash
-docker compose --file compose.demo.yaml exec -T computer-a \
-  cat /demo-keys/vnc_password
-docker compose --file compose.demo.yaml exec -T computer-b \
-  cat /demo-keys/vnc_password
-```
-
-Open both desktops after the services are ready, then enter the corresponding
-eight-character password:
+Open both passwordless desktops after the services are ready:
 
 - Computer A: <http://127.0.0.1:6081/vnc.html?autoconnect=1&resize=scale>
 - Computer B: <http://127.0.0.1:6082/vnc.html?autoconnect=1&resize=scale>
@@ -58,17 +48,15 @@ Stop the demo with `Ctrl+C`, then remove its containers:
 docker compose --file compose.demo.yaml down
 ```
 
-To also discard the demo-only SSH keys and desktop passwords, rotate every
-credential, and reset all state:
+To also discard and rotate the demo-only SSH keys and reset all state:
 
 ```bash
 docker compose --file compose.demo.yaml down --volumes
 ```
 
-Each browser desktop has its own random password and is published only on the
-Windows computer's loopback interface. Classic VNC authentication is suitable
-for this local proof of concept, not for exposing the demo as a production
-service.
+The browser desktops intentionally have no password and are published only on
+the Windows computer's loopback interface. This environment is for local
+demonstration only and must not be exposed as a production service.
 
 ## Build the Ubuntu executable
 

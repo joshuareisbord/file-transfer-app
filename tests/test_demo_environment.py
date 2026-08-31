@@ -64,6 +64,7 @@ def test_demo_compose_defines_two_browser_computers_and_key_bootstrap() -> None:
     assert "22" in services["computer-b"]["expose"]
 
     entrypoint = (project_directory / "packaging/demo/side-entrypoint.sh").read_text()
+    keygen = (project_directory / "packaging/demo/keygen.sh").read_text()
     assert '"$demo_home/library-updates"' in entrypoint
     assert '"$demo_home/software-updates"' in entrypoint
     assert "/home/demo/incoming" not in entrypoint
@@ -76,5 +77,7 @@ def test_demo_compose_defines_two_browser_computers_and_key_bootstrap() -> None:
     assert "pcmanfm" in dockerfile
     assert "packaging/demo/work-transfer-mark.svg" in dockerfile
     assert "install -d -m 755 /usr/local/share/work-transfer" in dockerfile
-    assert "-rfbauth" in desktop
-    assert "-nopw" not in desktop
+    assert "-nopw" in desktop
+    assert "-rfbauth" not in desktop
+    assert "vnc_password" not in keygen
+    assert "vnc_password" not in entrypoint

@@ -37,7 +37,7 @@ services:
     volumes:
       - computer-a-keys:/demo-keys:ro
     ports:
-      # Keep this local even though VNC also requires a generated password.
+      # DEMO ONLY: passwordless noVNC must never bind beyond host loopback.
       - "127.0.0.1:${COMPUTER_A_PORT:-6081}:6080"
 
   computer-b:
@@ -50,7 +50,7 @@ services:
     volumes:
       - computer-b-keys:/demo-keys:ro
     ports:
-      # Keep this local even though VNC also requires a generated password.
+      # DEMO ONLY: passwordless noVNC must never bind beyond host loopback.
       - "127.0.0.1:${COMPUTER_B_PORT:-6082}:6080"
 
 volumes:

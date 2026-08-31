@@ -24,18 +24,6 @@ ensure_keypair() {
     chmod 644 "$key_path.pub"
 }
 
-ensure_vnc_password() {
-    local password_path="$1"
-    local password
-
-    if [[ ! -s "$password_path" ]]; then
-        # Six random bytes encode to the eight characters supported by VNC auth.
-        password="$(head -c 6 /dev/urandom | base64)"
-        printf '%s\n' "$password" >"$password_path"
-    fi
-    chmod 600 "$password_path"
-}
-
 # A owns the only client private key. B receives only the public half.
 ensure_keypair \
     "$computer_a_keys/client_ed25519" \
@@ -52,7 +40,4 @@ install -m 644 \
     "$computer_b_keys/host_computer-b_ed25519.pub" \
     "$computer_a_keys/host_computer-b_ed25519.pub"
 
-ensure_vnc_password "$computer_a_keys/vnc_password"
-ensure_vnc_password "$computer_b_keys/vnc_password"
-
-echo "Directional demo SSH identities and desktop passwords are ready."
+echo "Directional demo SSH identities are ready."

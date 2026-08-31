@@ -32,7 +32,7 @@ if [[ ! "$peer_port" =~ ^[0-9]+$ ]] || ((peer_port < 1 || peer_port > 65535)); t
     exit 2
 fi
 
-required_keys=("$key_directory/vnc_password")
+required_keys=()
 if [[ "$side" == "computer-a" ]]; then
     required_keys+=(
         "$key_directory/client_ed25519"
@@ -53,24 +53,12 @@ for required_key in "${required_keys[@]}"; do
     fi
 done
 
-install -d -m 700 -o "$demo_user" -g "$demo_user" \
-    "$demo_home/.ssh" \
-    "$demo_home/.vnc"
+install -d -m 700 -o "$demo_user" -g "$demo_user" "$demo_home/.ssh"
 install -d -m 755 -o "$demo_user" -g "$demo_user" \
     "$demo_home/outgoing" \
     "$demo_home/library-updates" \
     "$demo_home/software-updates"
 install -d -m 1777 /tmp/.X11-unix
-
-vnc_password="$(<"$key_directory/vnc_password")"
-if ((${#vnc_password} != 8)); then
-    echo "The demo VNC password must contain exactly eight characters" >&2
-    exit 1
-fi
-x11vnc -storepasswd "$vnc_password" "$demo_home/.vnc/passwd" >/dev/null
-unset vnc_password
-chown "$demo_user:$demo_user" "$demo_home/.vnc/passwd"
-chmod 600 "$demo_home/.vnc/passwd"
 
 if [[ "$side" == "computer-a" ]]; then
     install -m 600 -o "$demo_user" -g "$demo_user" \

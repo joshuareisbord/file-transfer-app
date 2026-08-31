@@ -45,14 +45,14 @@ else
 fi
 application_pid=$!
 
-# Each side receives a separate generated VNC password. Compose also publishes
-# the noVNC proxy only on host loopback; port 5900 is never exposed.
+# DEMO ONLY: noVNC is passwordless. Compose publishes the proxy only on host
+# loopback, and the raw VNC port is never exposed.
 x11vnc \
     -display "$DISPLAY" \
     -rfbport 5900 \
     -forever \
     -shared \
-    -rfbauth "$HOME/.vnc/passwd" \
+    -nopw \
     -localhost \
     -noxdamage &
 vnc_pid=$!
