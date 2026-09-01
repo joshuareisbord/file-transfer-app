@@ -1,4 +1,4 @@
-ARG UBUNTU_VERSION=26.04
+ARG UBUNTU_VERSION=24.04
 
 FROM ubuntu:${UBUNTU_VERSION} AS builder
 
@@ -48,7 +48,7 @@ RUN uv run pyinstaller \
     --specpath /tmp \
     work_transfer_app/__main__.py
 RUN /output/work-transfer --self-check
-RUN ./packaging/smoke-test.sh /output/work-transfer
+RUN xvfb-run --auto-servernum ./packaging/smoke-test.sh /output/work-transfer
 
 FROM ubuntu:${UBUNTU_VERSION} AS runtime-check
 

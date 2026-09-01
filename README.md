@@ -61,7 +61,7 @@ demonstration only and must not be exposed as a production service.
 ## Build the Ubuntu executable
 
 The build requires Git and a running Docker engine. It is pinned to the official
-Ubuntu 26.04 LTS image even when the build computer uses another Ubuntu release.
+Ubuntu 24.04 LTS image even when the build computer uses another Ubuntu release.
 Python and the application dependencies are installed only inside the builder.
 
 Clone this private repository with the GitHub CLI:
@@ -81,7 +81,7 @@ Build for the architecture used by the Ubuntu computers:
 
 The build runs the automated tests, native GUI smoke test, and a real loopback
 SCP transfer inside Ubuntu. Before export, the one-file executable must also
-pass its self-check in a clean Ubuntu 26.04 LTS stage where Python is absent.
+pass its self-check in a clean Ubuntu 24.04 LTS stage where Python is absent.
 The result is written to `dist/work-transfer-ubuntu-<architecture>`.
 
 Copy the executable to an Ubuntu computer and verify it before launching:
@@ -102,7 +102,7 @@ The executable contains its Python interpreter and Python packages. The target
 computer does not need Python, `pip`, `uv`, or Docker. It is an Ubuntu desktop
 application rather than a fully static Linux binary, so it still uses core
 Ubuntu runtime libraries, a graphical display, and the separately installed
-OpenSSH service used for SCP. This build targets Ubuntu 26.04 LTS or newer.
+OpenSSH service used for SCP. This build targets Ubuntu 24.04 LTS or newer.
 
 ## Prepare the two computers
 

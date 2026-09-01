@@ -23,7 +23,7 @@ run_gui_smoke() {
     shift
 
     set +e
-    xvfb-run --auto-servernum timeout 3 "$executable" "$@"
+    timeout 3 "$executable" "$@"
     status=$?
     set -e
 
