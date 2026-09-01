@@ -1,4 +1,6 @@
-FROM ubuntu:latest AS builder
+ARG UBUNTU_VERSION=26.04
+
+FROM ubuntu:${UBUNTU_VERSION} AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
 ENV PATH="/opt/uv-bootstrap/bin:/root/.local/bin:$PATH"
@@ -26,6 +28,7 @@ RUN uv sync --frozen --no-install-project
 
 COPY work_transfer_app ./work_transfer_app
 COPY tests ./tests
+COPY packaging/Dockerfile ./packaging/Dockerfile
 COPY packaging/e2e ./packaging/e2e
 COPY packaging/smoke-test.sh ./packaging/smoke-test.sh
 
@@ -47,7 +50,15 @@ RUN uv run pyinstaller \
 RUN /output/work-transfer --self-check
 RUN ./packaging/smoke-test.sh /output/work-transfer
 
-FROM ubuntu:latest AS demo-keygen
+FROM ubuntu:${UBUNTU_VERSION} AS runtime-check
+
+COPY --from=builder /output/work-transfer /work-transfer
+
+# Prove the one-file artifact supplies its own Python runtime and packages.
+RUN ! command -v python3
+RUN /work-transfer --self-check
+
+FROM ubuntu:${UBUNTU_VERSION} AS demo-keygen
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -58,7 +69,7 @@ COPY --chmod=755 packaging/demo/keygen.sh /usr/local/bin/demo-keygen
 
 ENTRYPOINT ["/usr/local/bin/demo-keygen"]
 
-FROM ubuntu:latest AS demo
+FROM ubuntu:${UBUNTU_VERSION} AS demo
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -96,4 +107,4 @@ EXPOSE 22 6080
 ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/usr/local/bin/demo-side-entrypoint"]
 
 FROM scratch AS artifact
-COPY --from=builder /output/work-transfer /work-transfer
+COPY --from=runtime-check /work-transfer /work-transfer

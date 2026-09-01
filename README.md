@@ -60,9 +60,9 @@ demonstration only and must not be exposed as a production service.
 
 ## Build the Ubuntu executable
 
-The build requires Git and a running Docker engine. Python and the application
-dependencies are installed inside the Ubuntu builder, so they do not need to be
-installed on the host.
+The build requires Git and a running Docker engine. It is pinned to the official
+Ubuntu 26.04 LTS image even when the build computer uses another Ubuntu release.
+Python and the application dependencies are installed only inside the builder.
 
 Clone this private repository with the GitHub CLI:
 
@@ -80,8 +80,9 @@ Build for the architecture used by the Ubuntu computers:
 ```
 
 The build runs the automated tests, native GUI smoke test, and a real loopback
-SCP transfer inside Ubuntu before exporting the executable to
-`dist/work-transfer-ubuntu-<architecture>`.
+SCP transfer inside Ubuntu. Before export, the one-file executable must also
+pass its self-check in a clean Ubuntu 26.04 LTS stage where Python is absent.
+The result is written to `dist/work-transfer-ubuntu-<architecture>`.
 
 Copy the executable to an Ubuntu computer and verify it before launching:
 
@@ -97,8 +98,11 @@ To install the executable and its application-menu entry on Ubuntu:
 ./scripts/install-ubuntu.sh dist/work-transfer-ubuntu-amd64
 ```
 
-The executable targets the Ubuntu release used by the builder or a newer
-release. Build on the oldest Ubuntu release you need to support.
+The executable contains its Python interpreter and Python packages. The target
+computer does not need Python, `pip`, `uv`, or Docker. It is an Ubuntu desktop
+application rather than a fully static Linux binary, so it still uses core
+Ubuntu runtime libraries, a graphical display, and the separately installed
+OpenSSH service used for SCP. This build targets Ubuntu 26.04 LTS or newer.
 
 ## Prepare the two computers
 
