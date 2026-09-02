@@ -18,6 +18,7 @@ inline constexpr int kPinnedSourceDescriptor = 197;
 struct ProcessSpec {
     std::string executable;
     std::vector<std::string> arguments;
+    std::string_view password;
     bool use_pty{false};
     bool cancellable{false};
     int inherited_source{-1};

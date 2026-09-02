@@ -82,13 +82,13 @@ std::string localized_backend_message(const Translator& translator,
       {"host_key", "errors.host_key"},
       {"source_file_missing", "errors.source_file_missing"},
       {"destination_file_exists", "errors.remote_file_exists"},
-      {"identity_file_missing", "errors.identity_file_missing"},
       {"known_hosts_missing", "errors.known_hosts_missing"},
       {"connection_not_tested", "connection.test_required"},
       {"transfer_active", "errors.transfer_active"},
       {"invalid_remote_directory", "errors.remote_directory_invalid"},
       {"invalid_host", "validation.host_required"},
       {"invalid_username", "validation.username_required"},
+      {"invalid_password", "validation.password_required"},
       {"invalid_port", "validation.port_range"},
   };
   if (const auto known = translations.find(message); known != translations.end()) {
@@ -250,10 +250,6 @@ void WorkTransferWindow::Impl::run_tests_callback(Fl_Widget*, void* data) {
 
 void WorkTransferWindow::Impl::input_changed_callback(Fl_Widget*, void* data) {
   static_cast<Impl*>(data)->connection_changed();
-}
-
-void WorkTransferWindow::Impl::choose_key_callback(Fl_Widget*, void* data) {
-  static_cast<Impl*>(data)->choose_key();
 }
 
 void WorkTransferWindow::Impl::test_connection_callback(Fl_Widget*, void* data) {

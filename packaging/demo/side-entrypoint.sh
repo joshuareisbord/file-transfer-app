@@ -7,6 +7,8 @@ readonly key_directory="/demo-keys"
 readonly side="${DEMO_SIDE:?DEMO_SIDE must identify this computer}"
 readonly peer_host="${PEER_HOST:-}"
 readonly peer_port="${PEER_PORT:-22}"
+readonly demo_password="${DEMO_SSH_PASSWORD:-}"
+unset DEMO_SSH_PASSWORD
 
 case "$side" in
     computer-a)
@@ -14,10 +16,18 @@ case "$side" in
             echo "Computer A requires PEER_HOST=computer-b" >&2
             exit 2
         fi
+        if [[ -n "$demo_password" ]]; then
+            echo "Computer A must not receive the demo SSH password" >&2
+            exit 2
+        fi
         ;;
     computer-b)
         if [[ -n "$peer_host" ]]; then
             echo "Computer B must not define an outbound peer" >&2
+            exit 2
+        fi
+        if [[ -z "$demo_password" ]]; then
+            echo "Computer B requires DEMO_SSH_PASSWORD" >&2
             exit 2
         fi
         ;;
@@ -31,17 +41,19 @@ if [[ ! "$peer_port" =~ ^[0-9]+$ ]] || ((peer_port < 1 || peer_port > 65535)); t
     echo "PEER_PORT must be between 1 and 65535" >&2
     exit 2
 fi
+if ((${#demo_password} > 1024)) || [[ "$demo_password" == *$'\n'* ]] || \
+    [[ "$demo_password" == *$'\r'* ]]; then
+    echo "DEMO_SSH_PASSWORD must be a single line no longer than 1024 characters" >&2
+    exit 2
+fi
 
 required_keys=()
 if [[ "$side" == "computer-a" ]]; then
     required_keys+=(
-        "$key_directory/client_ed25519"
-        "$key_directory/client_ed25519.pub"
         "$key_directory/host_computer-b_ed25519.pub"
     )
 else
     required_keys+=(
-        "$key_directory/client_ed25519.pub"
         "$key_directory/host_computer-b_ed25519"
         "$key_directory/host_computer-b_ed25519.pub"
     )
@@ -61,13 +73,6 @@ install -d -m 755 -o "$demo_user" -g "$demo_user" \
 install -d -m 1777 /tmp/.X11-unix
 
 if [[ "$side" == "computer-a" ]]; then
-    install -m 600 -o "$demo_user" -g "$demo_user" \
-        "$key_directory/client_ed25519" \
-        "$demo_home/.ssh/demo_key"
-    install -m 644 -o "$demo_user" -g "$demo_user" \
-        "$key_directory/client_ed25519.pub" \
-        "$demo_home/.ssh/demo_key.pub"
-
     printf '%s\n' \
         "This file started on computer-a." \
         "Send it with Library Update to computer-b." \
@@ -76,15 +81,7 @@ if [[ "$side" == "computer-a" ]]; then
         "$demo_home/outgoing/sample-from-computer-a.txt"
     chmod 644 "$demo_home/outgoing/sample-from-computer-a.txt"
 else
-    temporary_authorized_keys="$(mktemp)"
-    {
-        printf 'restrict '
-        cat "$key_directory/client_ed25519.pub"
-    } >"$temporary_authorized_keys"
-    install -m 600 -o "$demo_user" -g "$demo_user" \
-        "$temporary_authorized_keys" \
-        "$demo_home/.ssh/authorized_keys"
-    rm -f -- "$temporary_authorized_keys"
+    printf '%s:%s\n' "$demo_user" "$demo_password" | chpasswd
 fi
 
 start_receiver_sshd() {
@@ -99,10 +96,9 @@ start_receiver_sshd() {
         'ListenAddress 0.0.0.0' \
         'HostKey /etc/ssh/ssh_host_ed25519_key' \
         'PidFile /run/sshd.pid' \
-        'AuthorizedKeysFile .ssh/authorized_keys' \
-        'AuthenticationMethods publickey' \
-        'PubkeyAuthentication yes' \
-        'PasswordAuthentication no' \
+        'AuthenticationMethods password' \
+        'PubkeyAuthentication no' \
+        'PasswordAuthentication yes' \
         'KbdInteractiveAuthentication no' \
         'PermitEmptyPasswords no' \
         'PermitRootLogin no' \

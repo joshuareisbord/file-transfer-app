@@ -6,6 +6,7 @@
 #include <array>
 #include <cerrno>
 #include <cmath>
+#include <cstdlib>
 #include <fcntl.h>
 #include <limits>
 #include <stdexcept>
@@ -13,7 +14,9 @@
 
 #include <poll.h>
 #include <signal.h>
+#include <sys/ioctl.h>
 #include <sys/wait.h>
+#include <termios.h>
 #include <unistd.h>
 
 #if defined(__linux__)
@@ -28,6 +31,7 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 constexpr std::size_t kMaximumDiagnosticBytes = 16384;
+constexpr std::size_t kMaximumPromptTailBytes = 256;
 constexpr auto kTerminationGrace = std::chrono::seconds(2);
 
 struct FileDescriptor {
@@ -183,6 +187,40 @@ void append_bounded(std::string& output, std::string_view chunk) {
     output.append(chunk.substr(0, remaining));
 }
 
+void append_prompt_tail(std::string& tail, std::string_view chunk) {
+    for (const unsigned char character : chunk) {
+        tail.push_back(character >= 'A' && character <= 'Z'
+                           ? static_cast<char>(character - 'A' + 'a')
+                           : static_cast<char>(character));
+    }
+    if (tail.size() > kMaximumPromptTailBytes) {
+        tail.erase(0, tail.size() - kMaximumPromptTailBytes);
+    }
+}
+
+bool write_all(int descriptor, std::string_view value) {
+    std::size_t offset = 0;
+    while (offset < value.size()) {
+        const auto count =
+            ::write(descriptor, value.data() + offset, value.size() - offset);
+        if (count > 0) {
+            offset += static_cast<std::size_t>(count);
+            continue;
+        }
+        if (count < 0 && errno == EINTR) {
+            continue;
+        }
+        if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            pollfd writable{.fd = descriptor, .events = POLLOUT, .revents = 0};
+            if (::poll(&writable, 1, 1000) > 0) {
+                continue;
+            }
+        }
+        return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 namespace internal {
@@ -203,6 +241,10 @@ ProcessResult run_process(const ProcessSpec& spec,
         result.cancelled = true;
         return result;
     }
+    if (!spec.password.empty() && !spec.use_pty) {
+        result.diagnostic = "password authentication requires a local PTY";
+        return result;
+    }
 
     int read_descriptor = -1;
     int write_descriptor = -1;
@@ -210,6 +252,18 @@ ProcessResult run_process(const ProcessSpec& spec,
     int slave = -1;
     if (spec.use_pty) {
         if (::openpty(&master, &slave, nullptr, nullptr, nullptr) != 0) {
+            return result;
+        }
+        termios attributes {};
+        if (::tcgetattr(slave, &attributes) != 0) {
+            ::close(master);
+            ::close(slave);
+            return result;
+        }
+        attributes.c_lflag &= static_cast<tcflag_t>(~(ECHO | ECHONL));
+        if (::tcsetattr(slave, TCSANOW, &attributes) != 0) {
+            ::close(master);
+            ::close(slave);
             return result;
         }
         read_descriptor = master;
@@ -229,9 +283,12 @@ ProcessResult run_process(const ProcessSpec& spec,
     FileDescriptor read_end(read_descriptor);
     FileDescriptor write_end(write_descriptor);
     set_nonblocking(read_end.value);
-    FileDescriptor null_input(::open("/dev/null", O_RDONLY | O_CLOEXEC));
-    if (null_input.value < 0) {
-        return result;
+    FileDescriptor null_input;
+    if (!spec.use_pty) {
+        null_input = FileDescriptor(::open("/dev/null", O_RDONLY | O_CLOEXEC));
+        if (null_input.value < 0) {
+            return result;
+        }
     }
 
     std::vector<char*> arguments;
@@ -247,11 +304,20 @@ ProcessResult run_process(const ProcessSpec& spec,
         return result;
     }
     if (process == 0) {
-        static_cast<void>(::setpgid(0, 0));
-        if (::dup2(null_input.value, STDIN_FILENO) < 0 ||
-            ::dup2(write_end.value, STDOUT_FILENO) < 0 ||
-            ::dup2(write_end.value, STDERR_FILENO) < 0) {
-            ::_exit(126);
+        if (spec.use_pty) {
+            if (::setsid() < 0 || ::ioctl(write_end.value, TIOCSCTTY, 0) < 0 ||
+                ::dup2(write_end.value, STDIN_FILENO) < 0 ||
+                ::dup2(write_end.value, STDOUT_FILENO) < 0 ||
+                ::dup2(write_end.value, STDERR_FILENO) < 0) {
+                ::_exit(126);
+            }
+        } else {
+            static_cast<void>(::setpgid(0, 0));
+            if (::dup2(null_input.value, STDIN_FILENO) < 0 ||
+                ::dup2(write_end.value, STDOUT_FILENO) < 0 ||
+                ::dup2(write_end.value, STDERR_FILENO) < 0) {
+                ::_exit(126);
+            }
         }
         if (spec.inherited_source >= 0) {
             if (spec.inherited_source != kPinnedSourceDescriptor) {
@@ -270,11 +336,16 @@ ProcessResult run_process(const ProcessSpec& spec,
             spec.inherited_source != kPinnedSourceDescriptor) {
             ::close(spec.inherited_source);
         }
+        if (::setenv("LC_ALL", "C", 1) != 0) {
+            ::_exit(126);
+        }
         ::execv(arguments.front(), arguments.data());
         ::_exit(127);
     }
 
-    static_cast<void>(::setpgid(process, process));
+    if (!spec.use_pty) {
+        static_cast<void>(::setpgid(process, process));
+    }
     write_end = FileDescriptor{};
     null_input = FileDescriptor{};
     if (spec.cancellable) {
@@ -286,6 +357,29 @@ ProcessResult run_process(const ProcessSpec& spec,
     bool process_done = false;
     int wait_status = 0;
     std::array<char, 4096> buffer{};
+    std::string prompt_tail;
+    bool password_sent = spec.password.empty();
+    auto handle_output = [&](std::string_view chunk) {
+        append_bounded(result.diagnostic, chunk);
+        if (!password_sent) {
+            append_prompt_tail(prompt_tail, chunk);
+            if (prompt_tail.find("password:") != std::string::npos) {
+                password_sent = true;
+                if (!write_all(read_end.value, spec.password) ||
+                    !write_all(read_end.value, "\n")) {
+                    append_bounded(result.diagnostic,
+                                   "\nUnable to provide the SSH password.\n");
+                    if (!termination_started) {
+                        termination_started = Clock::now();
+                        terminate_group(process, SIGTERM);
+                    }
+                }
+            }
+        }
+        if (on_output) {
+            on_output(chunk);
+        }
+    };
     while (!process_done) {
         pollfd descriptor{.fd = read_end.value, .events = POLLIN, .revents = 0};
         static_cast<void>(::poll(&descriptor, 1, 100));
@@ -294,10 +388,7 @@ ProcessResult run_process(const ProcessSpec& spec,
             if (count > 0) {
                 const std::string_view chunk(buffer.data(),
                                              static_cast<std::size_t>(count));
-                append_bounded(result.diagnostic, chunk);
-                if (on_output) {
-                    on_output(chunk);
-                }
+                handle_output(chunk);
                 continue;
             }
             if (count < 0 && errno == EINTR) {
@@ -349,10 +440,7 @@ ProcessResult run_process(const ProcessSpec& spec,
         if (count > 0) {
             const std::string_view chunk(buffer.data(),
                                          static_cast<std::size_t>(count));
-            append_bounded(result.diagnostic, chunk);
-            if (on_output) {
-                on_output(chunk);
-            }
+            handle_output(chunk);
             continue;
         }
         if (count < 0 && errno == EINTR) {
@@ -397,6 +485,59 @@ std::string random_identifier() {
 }  // namespace internal
 
 namespace detail {
+
+std::optional<std::string> normalize_remote_directory(std::string_view input) {
+    if (input.empty() || input.size() > 4096 ||
+        std::any_of(input.begin(), input.end(), [](unsigned char character) {
+            return character < 0x20 || character == 0x7f;
+        })) {
+        return std::nullopt;
+    }
+
+    std::string prefix;
+    std::string_view remainder;
+    if (input == "~") {
+        return std::string{"~"};
+    }
+    if (input.starts_with("~/")) {
+        prefix = "~/";
+        remainder = input.substr(2);
+    } else if (input.starts_with('/')) {
+        prefix = "/";
+        remainder = input.substr(1);
+    } else {
+        return std::nullopt;
+    }
+
+    std::vector<std::string_view> components;
+    std::size_t position = 0;
+    while (position <= remainder.size()) {
+        const auto end = remainder.find('/', position);
+        const auto component = remainder.substr(position, end - position);
+        if (component == "..") {
+            return std::nullopt;
+        }
+        if (!component.empty() && component != ".") {
+            components.push_back(component);
+        }
+        if (end == std::string_view::npos) {
+            break;
+        }
+        position = end + 1;
+    }
+
+    std::string result = prefix;
+    for (const auto component : components) {
+        if (!result.ends_with('/')) {
+            result.push_back('/');
+        }
+        result.append(component);
+    }
+    if (result == "~/") {
+        return std::string{"~"};
+    }
+    return result;
+}
 
 std::optional<TransferProgress> parse_scp_progress_line(
     std::string_view line, std::string_view filename,

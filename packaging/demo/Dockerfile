@@ -43,9 +43,6 @@ RUN apt-get update && apt-get install --yes --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --shell /bin/bash demo
-# DEMO ONLY: password login is disabled in sshd; clearing the password hash keeps
-# the account usable with the ephemeral public key on minimal Ubuntu images.
-RUN passwd --delete demo
 RUN install -d -m 700 -o demo -g demo /home/demo/.ssh
 
 # The named context is the output of Dockerfile.build, supplied by Compose or

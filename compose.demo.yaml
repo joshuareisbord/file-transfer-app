@@ -49,6 +49,8 @@ services:
     hostname: computer-b
     environment:
       DEMO_SIDE: computer-b
+      # DEMO ONLY: fixed password for the isolated A-to-B SSH demonstration.
+      DEMO_SSH_PASSWORD: demo
     expose:
       - "22"
     volumes:
@@ -58,6 +60,6 @@ services:
       - "127.0.0.1:${COMPUTER_B_PORT:-6082}:6080"
 
 volumes:
-  # Separate bundles preserve A-to-B authority across sibling containers.
+  # Separate bundles keep B's private host identity out of Computer A.
   computer-a-keys:
   computer-b-keys:

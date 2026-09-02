@@ -25,7 +25,7 @@ enum class TransferErrorKind {
 struct ConnectionConfig {
     std::string host;
     std::string username;
-    std::filesystem::path identity_file;
+    std::string password;
     std::filesystem::path known_hosts;
     std::uint16_t port{22};
 };
@@ -82,7 +82,7 @@ class PreparedSource final {
     friend class ScpTransport;
 };
 
-/** Run strict, key-only OpenSSH operations without invoking a local shell. */
+/** Run strict, password-authenticated OpenSSH operations without a local shell. */
 class ScpTransport final {
   public:
     ScpTransport();
@@ -93,7 +93,7 @@ class ScpTransport final {
     ScpTransport(ScpTransport&&) = delete;
     ScpTransport& operator=(ScpTransport&&) = delete;
 
-    /** Test host verification and public-key authentication synchronously. */
+    /** Test strict host verification and password authentication synchronously. */
     [[nodiscard]] ConnectionTestResult test_connection(
         const ConnectionConfig& config);
 
@@ -149,6 +149,10 @@ class ScpTransport final {
 };
 
 namespace detail {
+
+/** Normalize a safe absolute or home-relative remote directory. */
+[[nodiscard]] std::optional<std::string> normalize_remote_directory(
+    std::string_view path);
 
 /** Parse one bounded OpenSSH SCP progress record. */
 [[nodiscard]] std::optional<TransferProgress> parse_scp_progress_line(

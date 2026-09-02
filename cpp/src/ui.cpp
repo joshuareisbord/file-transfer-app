@@ -16,6 +16,7 @@
 #include <FL/fl_ask.H>
 
 #include "work_transfer/logo.hpp"
+#include "work_transfer/transfer.hpp"
 
 #include <algorithm>
 #include <array>
@@ -329,55 +330,62 @@ void WorkTransferWindow::Impl::build_connection_page(int page_index) {
   panel->box(FL_BORDER_BOX);
   panel->color(fl_color(configuration.theme, "surface"));
   panel->begin();
-  const int label_x = 44;
-  const int input_x = 250;
-  const int input_width = window->w() - input_x - 48;
-  auto add_field = [&](int row, std::string_view key, Fl_Input*& input) {
-    const int y = top + 112 + row * 54;
-    auto* label = new Fl_Box(label_x, y, 194, 36);
+  constexpr int margin = 22;
+  constexpr int column_gap = 28;
+  constexpr int row_height = 64;
+  const int column_width = (panel->w() - margin * 2 - column_gap) / 2;
+  const int left_x = panel->x() + margin;
+  const int right_x = left_x + column_width + column_gap;
+  const int fields_y = panel->y() + 12;
+  auto add_field = [&](int column, int row, std::string_view key,
+                       bool secret = false) -> Fl_Input* {
+    const int x = column == 0 ? left_x : right_x;
+    const int y = fields_y + row * row_height;
+    auto* label = new Fl_Box(x, y, column_width, 20);
     style_box(label, fl_color(configuration.theme, "surface"),
               fl_color(configuration.theme, "ink"));
     label->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
     set_widget_label(label, t(key));
-    input = new Fl_Input(input_x, y, input_width, 36);
+    Fl_Input* input = secret
+                          ? static_cast<Fl_Input*>(
+                                new Fl_Secret_Input(x, y + 22, column_width, 34))
+                          : new Fl_Input(x, y + 22, column_width, 34);
     input->textsize(14);
     input->when(FL_WHEN_CHANGED);
     input->callback(input_changed_callback, this);
+    return input;
   };
-  add_field(0, "connection.host", host_input);
-  add_field(1, "connection.username", username_input);
-  add_field(2, "connection.port", port_input);
+
+  host_input = add_field(0, 0, "connection.host");
+  username_input = add_field(0, 1, "connection.username");
+  password_input = static_cast<Fl_Secret_Input*>(
+      add_field(0, 2, "connection.password", true));
+  password_input->maximum_size(1024);
+  port_input = add_field(1, 0, "connection.port");
   port_input->value("22");
+  library_destination_input =
+      add_field(1, 1, "connection.library_destination");
+  library_destination_input->value(
+      configuration.destinations.library_update.c_str());
+  software_destination_input =
+      add_field(1, 2, "connection.software_destination");
+  software_destination_input->value(
+      configuration.destinations.software_update.c_str());
 
-  const int key_y = top + 274;
-  auto* key_label = new Fl_Box(label_x, key_y, 194, 36);
-  style_box(key_label, fl_color(configuration.theme, "surface"),
-            fl_color(configuration.theme, "ink"));
-  key_label->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
-  set_widget_label(key_label, t("connection.private_key"));
-  key_input = new Fl_Input(input_x, key_y, input_width - 118, 36);
-  key_input->textsize(14);
-  key_input->when(FL_WHEN_CHANGED);
-  key_input->callback(input_changed_callback, this);
-  auto* key_button =
-      new Fl_Button(input_x + input_width - 108, key_y, 108, 36);
-  style_button(key_button, configuration.theme, false);
-  set_widget_label(key_button, t("common.browse"));
-  key_button->callback(choose_key_callback, this);
-
-  connection_detail =
-      new Fl_Box(label_x, top + 328, window->w() - 290, 44);
+  const int action_y = panel->y() + panel->h() - 54;
+  connection_detail = new Fl_Box(panel->x() + margin, action_y,
+                                 panel->w() - margin * 2 - 192, 40);
   style_box(connection_detail, fl_color(configuration.theme, "surface"),
             fl_color(configuration.theme, "muted"));
   connection_detail->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_WRAP);
   set_widget_label(connection_detail, t("connection.status_untested"));
-  test_connection_button =
-      new Fl_Button(window->w() - 220, top + 330, 176, 40);
+  test_connection_button = new Fl_Button(panel->x() + panel->w() - margin - 176,
+                                         action_y, 176, 40);
   style_button(test_connection_button, configuration.theme, true);
   set_widget_label(test_connection_button, t("connection.test"));
   test_connection_button->callback(test_connection_callback, this);
   panel->end();
-  panel->resizable(key_input);
+  panel->resizable(software_destination_input);
   group->resizable(panel);
   group->end();
   group->hide();
@@ -748,31 +756,28 @@ void WorkTransferWindow::Impl::connection_changed() {
   }
 }
 
-void WorkTransferWindow::Impl::choose_key() {
-  Fl_Native_File_Chooser chooser;
-  chooser.title(t("connection.choose_key").c_str());
-  chooser.type(Fl_Native_File_Chooser::BROWSE_FILE);
-  const int result = chooser.show();
-  if (result == 0 && chooser.filename() != nullptr) {
-    key_input->value(chooser.filename());
-    connection_changed();
-  }
-}
-
 void WorkTransferWindow::Impl::test_connection() {
   if (transfer_active || connection_test_active) {
     return;
   }
   const std::string host = host_input->value();
   const std::string username = username_input->value();
+  const std::string password = password_input->value();
   const std::string port_text = port_input->value();
-  const std::filesystem::path key = key_input->value();
+  const auto library_destination = detail::normalize_remote_directory(
+      library_destination_input->value());
+  const auto software_destination = detail::normalize_remote_directory(
+      software_destination_input->value());
   if (host.empty()) {
     set_widget_label(connection_detail, t("validation.host_required"));
     return;
   }
   if (username.empty()) {
     set_widget_label(connection_detail, t("validation.username_required"));
+    return;
+  }
+  if (password.empty()) {
+    set_widget_label(connection_detail, t("validation.password_required"));
     return;
   }
   unsigned int port = 0;
@@ -786,21 +791,26 @@ void WorkTransferWindow::Impl::test_connection() {
     set_widget_label(connection_detail, t("validation.port_range"));
     return;
   }
-  if (key.empty()) {
-    set_widget_label(connection_detail, t("validation.key_required"));
+  if (!library_destination.has_value()) {
+    set_widget_label(connection_detail,
+                     t("validation.library_destination_invalid"));
     return;
   }
-  std::error_code error;
-  if (!std::filesystem::is_regular_file(key, error) || error) {
-    set_widget_label(connection_detail, t("validation.key_missing"));
+  if (!software_destination.has_value()) {
+    set_widget_label(connection_detail,
+                     t("validation.software_destination_invalid"));
     return;
   }
   try {
     if (!callbacks.test_connection) {
       throw std::runtime_error("connection callback is unavailable");
     }
-    callbacks.test_connection(
-        {host, username, static_cast<std::uint16_t>(port), key});
+    library_page->destination = *library_destination;
+    software_page->destination = *software_destination;
+    callbacks.test_connection({.host = host,
+                               .username = username,
+                               .password = password,
+                               .port = static_cast<std::uint16_t>(port)});
     connection_test_active = true;
     set_widget_label(connection_detail, t("connection.status_testing"));
     refresh_action_buttons();

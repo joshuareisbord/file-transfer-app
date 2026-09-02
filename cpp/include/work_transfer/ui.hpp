@@ -22,8 +22,8 @@ enum class TransferOutcome { completed, aborted, failed };
 struct ConnectionRequest {
   std::string host;
   std::string username;
+  std::string password;
   std::uint16_t port;
-  std::filesystem::path identity_file;
 };
 
 struct TransferStartRequest {

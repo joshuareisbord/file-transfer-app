@@ -188,7 +188,7 @@ class ApplicationController final {
     return {
         .host = std::move(request.host),
         .username = std::move(request.username),
-        .identity_file = std::move(request.identity_file),
+        .password = std::move(request.password),
         .known_hosts = known_hosts_,
         .port = request.port,
     };

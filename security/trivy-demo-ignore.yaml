@@ -2,6 +2,7 @@ misconfigurations:
   - id: AVD-DS-0002
     statement: >-
       The key generator needs root to initialize root-owned Docker volumes. The
-      computer entrypoint needs root to install ephemeral SSH host keys and start
-      the receiver's sshd, then launches the graphical desktop as the unprivileged
-      demo user. The audit rejects any additional stage in this Dockerfile.
+      computer entrypoint needs root to set the isolated demo password, install
+      ephemeral SSH host keys, and start the receiver's sshd, then launches the
+      graphical desktop as the unprivileged demo user. The audit rejects any
+      additional stage in this Dockerfile.

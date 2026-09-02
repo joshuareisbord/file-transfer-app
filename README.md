@@ -46,16 +46,19 @@ tab:
 ```text
 Host or IP address: computer-b
 Username: demo
+Password: demo
 SSH port: 22
-Private key: /home/demo/.ssh/demo_key
+Library Update destination: ~/library-updates
+SW Update destination: ~/software-updates
 ```
 
 Run **Test connection**, open **Library Update**, select the sample file under
 `/home/demo/outgoing`, and start the transfer. The receiving file appears under
 `/home/demo/library-updates` in Computer B's open file manager. The demo
-provisions the SSH keys, strict `known_hosts` entry, configured update
-directories, and Computer A's sample file automatically. Only Computer A
-receives the SCP client private key, and only Computer B runs an SSH server.
+provisions Computer B's SSH host identity, Computer A's strict `known_hosts`
+entry, both update directories, and Computer A's sample file automatically.
+Only Computer B runs an SSH server, and its fixed `demo` password is confined
+to the isolated Docker network.
 
 Stop the demo with `Ctrl+C`, then remove its containers:
 
@@ -63,7 +66,7 @@ Stop the demo with `Ctrl+C`, then remove its containers:
 docker compose --file compose.demo.yaml down
 ```
 
-To also discard and rotate the demo-only SSH keys and reset all state:
+To also discard and rotate the demo-only SSH host identity and reset all state:
 
 ```bash
 docker compose --file compose.demo.yaml down --volumes
@@ -125,10 +128,11 @@ kernel-implementation and architecture-inapplicable CVE mappings on the
 header-only `linux-libc-dev` package; that kernel code is not linked or shipped.
 The policy is bound to the exact resolved package version and blocks every
 other High/Critical finding. The demo Dockerfile audit separately documents its
-root-entrypoint exception: root initializes the key volumes, installs ephemeral
-SSH host keys, and starts the receiver's `sshd`; the graphical desktop runs as
-the unprivileged `demo` user and browser ports remain restricted to host
-loopback. The audit fails if an additional stage could inherit that exception.
+root-entrypoint exception: root initializes the key volumes, sets the isolated
+demo password, installs ephemeral SSH host keys, and starts the receiver's
+`sshd`; the graphical desktop runs as the unprivileged `demo` user and browser
+ports remain restricted to host loopback. The audit fails if an additional
+stage could inherit that exception.
 
 Copy the executable to an Ubuntu computer and verify it before launching:
 
@@ -188,29 +192,32 @@ sudo nmcli connection add type ethernet ifname <interface-b> \
 sudo nmcli connection up work-transfer-direct
 ```
 
-On the sending computer, create a dedicated key and authorize it on the
-receiver. Replace `<remote-user>` with the receiver's Ubuntu username.
+Ensure the receiving Ubuntu account has a password, then make the first SSH
+connection from the sending computer. Replace `<remote-user>` with the
+receiver's Ubuntu username.
 
 ```bash
-ssh-keygen -q -t ed25519 -N "" -f "$HOME/.ssh/work_transfer"
-ssh-copy-id -i "$HOME/.ssh/work_transfer.pub" \
-  <remote-user>@192.168.50.2
-ssh -i "$HOME/.ssh/work_transfer" <remote-user>@192.168.50.2 \
+ssh <remote-user>@192.168.50.2 \
   'mkdir -p "$HOME/library-updates" "$HOME/software-updates"'
 ```
 
-The first `ssh` connection records the receiver in `known_hosts`, which the app
-requires for strict host verification.
+Enter that account's password when prompted. The first connection records the
+receiver in `known_hosts`, which the app requires for strict host verification.
+The receiver's SSH service must allow password authentication.
 
 ## Use the application
 
-1. In **Connection**, enter the receiver, username, SSH port, and private key,
-   then run **Test connection**.
+1. In **Connection**, enter the receiver, username, password, SSH port, and the
+   distinct Library Update and SW Update destination directories. Then run
+   **Test connection**.
+   The application supplies the operator-entered password through a private
+   local terminal; it does not place that credential in process arguments,
+   environment variables, or temporary files.
 2. In **Library Update** or **SW Update**, select one file and start the
-   transfer. The destination is fixed by `work_transfer_app/config/updates.toml`.
-   At Start, the app opens the source without following symbolic links and
-   creates a private stable snapshot. Later pathname replacement or in-place
-   writes cannot change the bytes sent.
+   transfer. Each tab uses its corresponding destination from the tested
+   Connection settings. At Start, the app opens the source without following
+   symbolic links and creates a private stable snapshot. Later pathname
+   replacement or in-place writes cannot change the bytes sent.
 3. Follow progress, throughput, and ETA in the persistent bottom tray. Abort
    cancels the active transfer and cleans its temporary remote file.
 4. Review successfully transferred files in the selected update page's
@@ -238,9 +245,10 @@ Static interface text comes from JSON catalogs under
 the executable to change UI text. Mock-test names are operational configuration
 and come directly from `work_transfer_app/config/tests.toml`.
 
-Fixed Library Update and SW Update destinations come from
-`work_transfer_app/config/updates.toml`. Both directories must already exist on
-the receiving computer and must be writable by the SSH user.
+Default Library Update and SW Update destinations come from
+`work_transfer_app/config/updates.toml`. Operators can change each path in the
+Connection tab before testing the connection. Both directories must already
+exist on the receiving computer and must be writable by the SSH user.
 
 All interface colors come from `work_transfer_app/ui/theme.toml`. Palette
 values are RGB triples, and semantic roles in the same file select which

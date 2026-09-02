@@ -11,6 +11,7 @@
 #include <FL/Fl_Image.H>
 #include <FL/Fl_Input.H>
 #include <FL/Fl_Progress.H>
+#include <FL/Fl_Secret_Input.H>
 #include <FL/fl_draw.H>
 
 #include <array>
@@ -135,8 +136,10 @@ struct WorkTransferWindow::Impl {
   std::size_t remaining_tests = 0;
   Fl_Input* host_input = nullptr;
   Fl_Input* username_input = nullptr;
+  Fl_Secret_Input* password_input = nullptr;
   Fl_Input* port_input = nullptr;
-  Fl_Input* key_input = nullptr;
+  Fl_Input* library_destination_input = nullptr;
+  Fl_Input* software_destination_input = nullptr;
   Fl_Box* connection_detail = nullptr;
   Fl_Button* test_connection_button = nullptr;
   Fl_Choice* language_choice = nullptr;
@@ -195,7 +198,6 @@ struct WorkTransferWindow::Impl {
   void apply_mock_result(const MockEvent& event);
   void set_test_state(std::size_t index, std::string_view state);
   void connection_changed();
-  void choose_key();
   void test_connection();
   void save_language();
   void abort_transfer();
@@ -256,7 +258,6 @@ struct WorkTransferWindow::Impl {
   static void start_callback(Fl_Widget*, void* data);
   static void run_tests_callback(Fl_Widget*, void* data);
   static void input_changed_callback(Fl_Widget*, void* data);
-  static void choose_key_callback(Fl_Widget*, void* data);
   static void test_connection_callback(Fl_Widget*, void* data);
   static void language_callback(Fl_Widget*, void* data);
   static void abort_callback(Fl_Widget*, void* data);

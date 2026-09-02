@@ -6,6 +6,13 @@ readonly computer_b_keys="/computer-b-keys"
 
 install -d -m 700 "$computer_a_keys" "$computer_b_keys"
 
+# Remove credentials from older key-authenticated demo volumes.
+rm -f -- \
+    "$computer_a_keys/client_ed25519" \
+    "$computer_a_keys/client_ed25519.pub" \
+    "$computer_b_keys/client_ed25519" \
+    "$computer_b_keys/client_ed25519.pub"
+
 ensure_keypair() {
     local key_path="$1"
     local comment="$2"
@@ -24,14 +31,6 @@ ensure_keypair() {
     chmod 644 "$key_path.pub"
 }
 
-# A owns the only client private key. B receives only the public half.
-ensure_keypair \
-    "$computer_a_keys/client_ed25519" \
-    "file-transfer Docker demo A-to-B sender"
-install -m 644 \
-    "$computer_a_keys/client_ed25519.pub" \
-    "$computer_b_keys/client_ed25519.pub"
-
 # Only B accepts SSH, so its private host identity never enters A's bundle.
 ensure_keypair \
     "$computer_b_keys/host_computer-b_ed25519" \
@@ -40,4 +39,4 @@ install -m 644 \
     "$computer_b_keys/host_computer-b_ed25519.pub" \
     "$computer_a_keys/host_computer-b_ed25519.pub"
 
-echo "Directional demo SSH identities are ready."
+echo "Directional demo SSH host identity is ready."

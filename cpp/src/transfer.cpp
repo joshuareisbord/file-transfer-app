@@ -174,21 +174,18 @@ struct ValidationError {
     if (config.port == 0) {
         return ValidationError{"invalid_port", TransferErrorKind::connection};
     }
-    const auto identity = absolute_normalized(config.identity_file);
-    if (!regular_file_exists(identity)) {
-        return ValidationError{"identity_file_missing",
+    if (config.password.empty() || config.password.size() > 1024 ||
+        has_control_or_nul(config.password)) {
+        return ValidationError{"invalid_password",
                                TransferErrorKind::authentication};
     }
     const auto known_hosts = absolute_normalized(config.known_hosts);
     if (!regular_file_exists(known_hosts)) {
         return ValidationError{"known_hosts_missing", TransferErrorKind::host_key};
     }
-    if (has_control_or_nul(identity.string()) ||
-        has_control_or_nul(known_hosts.string()) ||
-        identity.string().find('%') != std::string::npos ||
+    if (has_control_or_nul(known_hosts.string()) ||
         known_hosts.string().find('%') != std::string::npos) {
-        return ValidationError{"invalid_key_path",
-                               TransferErrorKind::authentication};
+        return ValidationError{"invalid_key_path", TransferErrorKind::host_key};
     }
     return std::nullopt;
 }
@@ -310,20 +307,19 @@ class ProgressStreamParser {
 
 [[nodiscard]] std::vector<std::string> strict_ssh_options(
     const ConnectionConfig& config) {
-    const auto identity = absolute_normalized(config.identity_file).string();
     const auto known_hosts = absolute_normalized(config.known_hosts).string();
     return {
         "-F", "/dev/null",
-        "-o", "BatchMode=yes",
-        "-o", "PreferredAuthentications=publickey",
-        "-o", "PubkeyAuthentication=yes",
-        "-o", "PasswordAuthentication=no",
+        "-o", "BatchMode=no",
+        "-o", "PreferredAuthentications=password",
+        "-o", "PubkeyAuthentication=no",
+        "-o", "PasswordAuthentication=yes",
         "-o", "KbdInteractiveAuthentication=no",
         "-o", "ChallengeResponseAuthentication=no",
         "-o", "HostbasedAuthentication=no",
         "-o", "GSSAPIAuthentication=no",
-        "-o", "IdentitiesOnly=yes",
         "-o", "IdentityAgent=none",
+        "-o", "NumberOfPasswordPrompts=1",
         "-o", "StrictHostKeyChecking=yes",
         "-o", "UserKnownHostsFile=" + quote_ssh_config_value(known_hosts),
         "-o", "GlobalKnownHostsFile=/dev/null",
@@ -337,56 +333,7 @@ class ProgressStreamParser {
         "-o", "PermitLocalCommand=no",
         "-o", "RequestTTY=no",
         "-o", "LogLevel=ERROR",
-        "-i", identity,
     };
-}
-
-[[nodiscard]] std::string normalized_remote_directory(std::string_view input) {
-    std::string prefix;
-    std::string_view remainder;
-    if (input == "~") {
-        return "~";
-    }
-    if (input.starts_with("~/")) {
-        prefix = "~/";
-        remainder = input.substr(2);
-    } else if (input.starts_with('/')) {
-        prefix = "/";
-        remainder = input.substr(1);
-    } else {
-        return {};
-    }
-
-    std::vector<std::string_view> parts;
-    std::size_t position = 0;
-    while (position <= remainder.size()) {
-        const auto end = remainder.find('/', position);
-        const auto part = remainder.substr(position, end - position);
-        if (!part.empty() && part != ".") {
-            if (part == "..") {
-                if (!parts.empty()) {
-                    parts.pop_back();
-                }
-            } else {
-                parts.push_back(part);
-            }
-        }
-        if (end == std::string_view::npos) {
-            break;
-        }
-        position = end + 1;
-    }
-    std::string result = prefix;
-    for (std::size_t index = 0; index < parts.size(); ++index) {
-        if (!result.ends_with('/')) {
-            result.push_back('/');
-        }
-        result.append(parts[index]);
-    }
-    if (result == "~/") {
-        return "~";
-    }
-    return result;
 }
 
 [[nodiscard]] std::string join_remote(std::string_view directory,
@@ -588,7 +535,8 @@ class ScpTransport::Impl {
         const auto process = run_process(
             {.executable = "/usr/bin/ssh",
              .arguments = std::move(arguments),
-             .use_pty = false,
+             .password = config.password,
+             .use_pty = true,
              .cancellable = true,
              .inherited_source = -1,
              .timeout = std::chrono::seconds(15)},
@@ -624,8 +572,8 @@ class ScpTransport::Impl {
                     TransferErrorKind::file, {}};
         }
         const auto remote_directory =
-            normalized_remote_directory(trim(remote_path));
-        if (remote_directory.empty()) {
+            detail::normalize_remote_directory(trim(remote_path));
+        if (!remote_directory.has_value()) {
             return {TransferState::failed, "invalid_remote_directory",
                     TransferErrorKind::file, {}};
         }
@@ -645,14 +593,14 @@ class ScpTransport::Impl {
         const auto config = normalized_config(original_config);
         std::string staging;
         try {
-            staging = join_remote(remote_directory,
+            staging = join_remote(*remote_directory,
                                   ".work-transfer-" +
                                       internal::random_identifier() + ".part");
         } catch (const std::exception&) {
             return {TransferState::failed, "random_source_unavailable",
                     TransferErrorKind::unknown, {}};
         }
-        const auto final_path = join_remote(remote_directory, filename);
+        const auto final_path = join_remote(*remote_directory, filename);
 
         cancellation_requested_.store(false);
         operation_active_.store(true);
@@ -703,6 +651,7 @@ class ScpTransport::Impl {
         const auto uploaded = run_process(
             {.executable = "/usr/bin/scp",
              .arguments = std::move(scp_arguments),
+             .password = config.password,
              .use_pty = true,
              .cancellable = true,
              .inherited_source = snapshot.descriptor.value,
@@ -773,7 +722,7 @@ class ScpTransport::Impl {
     static ConnectionConfig normalized_config(const ConnectionConfig& config) {
         return {.host = trim(config.host),
                 .username = trim(config.username),
-                .identity_file = absolute_normalized(config.identity_file),
+                .password = config.password,
                 .known_hosts = absolute_normalized(config.known_hosts),
                 .port = config.port};
     }
@@ -817,7 +766,8 @@ class ScpTransport::Impl {
                                            "--", ssh_target(config), command});
         return run_process({.executable = "/usr/bin/ssh",
                             .arguments = std::move(arguments),
-                            .use_pty = false,
+                            .password = config.password,
+                            .use_pty = true,
                             .cancellable = true,
                             .inherited_source = -1,
                             .timeout = std::chrono::seconds(15)},
@@ -833,7 +783,8 @@ class ScpTransport::Impl {
         static_cast<void>(run_process(
             {.executable = "/usr/bin/ssh",
              .arguments = std::move(arguments),
-             .use_pty = false,
+             .password = config.password,
+             .use_pty = true,
              .cancellable = false,
              .inherited_source = -1,
              .timeout = std::chrono::seconds(10)},

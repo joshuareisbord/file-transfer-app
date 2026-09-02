@@ -77,7 +77,7 @@ if [[ "$side" == "computer-a" ]]; then
     /usr/local/bin/work-transfer \
         --logo /usr/local/share/work-transfer/work-transfer-mark.svg &
 else
-    pcmanfm --no-desktop "$HOME/library-updates" &
+    pcmanfm --no-desktop "$HOME" &
 fi
 application_pid=$!
 
