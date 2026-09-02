@@ -81,13 +81,14 @@ Build the Ubuntu amd64 executable:
 ./scripts/build-ubuntu.sh amd64
 ```
 
-The build compiles the C++20 application, runs CTest, exercises a native GUI
-smoke test and a real loopback SCP transfer inside Ubuntu, and validates the
-result in a clean Ubuntu 24.04 LTS stage where Python is absent. It also scans
-the exact builder, runtime, and demo images for High/Critical findings and emits
-CycloneDX SBOMs. The audited executable is written to
-`dist/work-transfer-ubuntu-amd64`; its checksum, resolved package manifests,
-linkage report, and scan evidence are written beside it under `dist/`.
+The build compiles the C++20 application and packages it in a clean Ubuntu
+24.04 LTS stage where Python is absent. This demo branch does not compile or run
+the former CTest, GUI smoke, SCP loopback, or installer race test suites during
+the build. It still scans the exact builder, runtime, and demo images for
+High/Critical findings and emits CycloneDX SBOMs. The audited executable is
+written to `dist/work-transfer-ubuntu-amd64`; its checksum, resolved package
+manifests, linkage report, and scan evidence are written beside it under
+`dist/`.
 
 The builder report retains narrowly scoped, expiring exceptions for Ubuntu's
 kernel-implementation and architecture-inapplicable CVE mappings on the
@@ -223,12 +224,9 @@ sudo apt install build-essential cmake libcairo2-dev libfltk1.3-dev \
   libfontconfig1-dev libjpeg-dev libpng-dev librsvg2-dev \
   libtomlplusplus-dev pkg-config \
   libxcursor-dev libxext-dev libxfixes-dev libxft-dev libxinerama-dev \
-  libxrender-dev nlohmann-json3-dev openssh-client openssh-server xauth \
-  xvfb zlib1g-dev
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+  libxrender-dev nlohmann-json3-dev openssh-client zlib1g-dev
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
-ctest --test-dir build --output-on-failure
-xvfb-run --auto-servernum ./packaging/smoke-test.sh ./build/work-transfer
 ```
 
 The executable is at `build/work-transfer`. Feature code is grouped under

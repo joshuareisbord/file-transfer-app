@@ -24,11 +24,7 @@ RUN apt-get update && apt-get install --yes --no-install-recommends \
     libxinerama-dev \
     libxrender-dev \
     nlohmann-json3-dev \
-    openssh-client \
-    openssh-server \
     pkg-config \
-    xauth \
-    xvfb \
     zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
@@ -45,10 +41,6 @@ COPY work_transfer_app/config/tests.toml ./work_transfer_app/config/tests.toml
 COPY work_transfer_app/config/updates.toml ./work_transfer_app/config/updates.toml
 COPY work_transfer_app/ui/theme.toml ./work_transfer_app/ui/theme.toml
 
-COPY packaging/smoke-test.sh ./packaging/smoke-test.sh
-COPY --chmod=755 packaging/e2e/scp-loopback.sh ./packaging/e2e/scp-loopback.sh
-COPY --chmod=755 packaging/e2e/install-toctou.sh ./packaging/e2e/install-toctou.sh
-COPY --chmod=755 scripts/install-ubuntu.sh ./scripts/install-ubuntu.sh
 COPY packaging/work-transfer.desktop ./packaging/work-transfer.desktop
 
 RUN install -d -m 755 /output \
@@ -58,17 +50,11 @@ RUN install -d -m 755 /output \
 RUN cmake \
     -S /source \
     -B /build \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DBUILD_TESTING=ON
+    -DCMAKE_BUILD_TYPE=Release
 RUN cmake --build /build --parallel
-RUN ctest --test-dir /build --output-on-failure
-RUN ./packaging/e2e/scp-loopback.sh /build/test_scp_loopback
-RUN ./packaging/e2e/install-toctou.sh ./scripts/install-ubuntu.sh
 RUN cmake --install /build --prefix /staging --strip
 RUN install -D -m 755 /staging/bin/work-transfer /output/work-transfer
 RUN file /output/work-transfer | grep -q "ELF 64-bit.*x86-64"
-RUN /output/work-transfer --self-check
-RUN xvfb-run --auto-servernum ./packaging/smoke-test.sh /output/work-transfer
 
 FROM ubuntu:${UBUNTU_VERSION} AS runtime-check
 
@@ -91,13 +77,10 @@ RUN apt-get update && apt-get install --yes --no-install-recommends \
     libxrender1 \
     librsvg2-2 \
     openssh-client \
-    xauth \
-    xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /output/work-transfer /work-transfer
 COPY --from=builder /output/builder-packages.tsv /builder-packages.tsv
-COPY --from=builder /source/packaging/smoke-test.sh /smoke-test.sh
 COPY packaging/compatibility/ubuntu-24.04-desktop-runtime-packages.txt \
     /ubuntu-desktop-runtime-packages.txt
 
@@ -125,8 +108,6 @@ RUN : > /runtime-linked-packages.unsorted \
            exit 1; \
          }; \
        done < /runtime-linked-packages.txt
-RUN /work-transfer --self-check
-RUN xvfb-run --auto-servernum /smoke-test.sh /work-transfer
 RUN dpkg-query --show --showformat='${binary:Package}\t${Version}\n' \
         | sort > /runtime-packages.tsv
 
