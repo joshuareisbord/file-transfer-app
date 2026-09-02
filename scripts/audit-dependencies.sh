@@ -4,7 +4,9 @@ set -euo pipefail
 readonly target_architecture="amd64"
 readonly script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly project_directory="$(cd "$script_directory/.." && pwd)"
-readonly output_directory="${1:?Usage: $0 OUTPUT_DIRECTORY}"
+readonly output_directory="${1:-$project_directory/dist/audit}"
+readonly build_dockerfile="$project_directory/packaging/Dockerfile.build"
+readonly demo_dockerfile="$project_directory/packaging/demo/Dockerfile"
 readonly report_directory="$project_directory/dist/security"
 readonly previous_report_directory="$project_directory/dist/security-previous"
 readonly scanner_image="aquasec/trivy:latest"
@@ -45,6 +47,7 @@ fi
 mkdir -p \
     "$output_directory" \
     "$temporary_report_directory" \
+    "$temporary_directory/demo-context" \
     "$temporary_directory/trivy-cache"
 
 if [[ "$(date -u +%F)" > "$builder_policy_deadline" ]]; then
@@ -52,38 +55,55 @@ if [[ "$(date -u +%F)" > "$builder_policy_deadline" ]]; then
     exit 1
 fi
 
+demo_stage_names="$(
+    awk 'toupper($1) == "FROM" && toupper($(NF - 1)) == "AS" { print $NF }' \
+        "$demo_dockerfile"
+)"
+demo_stage_count="$(
+    awk 'toupper($1) == "FROM" { count += 1 } END { print count + 0 }' \
+        "$demo_dockerfile"
+)"
+if [[ "$demo_stage_count" != "2" || "$demo_stage_names" != $'demo-keygen\ndemo' ]]; then
+    echo "The demo root policy covers only demo-keygen and demo stages." >&2
+    exit 1
+fi
+
 # A release audit always resolves the current Ubuntu 24.04 image and stable apt
 # packages. The exact resolved closures are recorded after the build.
 docker build \
     --pull \
-    --no-cache \
     --platform "linux/$target_architecture" \
-    --file "$project_directory/packaging/Dockerfile" \
+    --file "$build_dockerfile" \
     --target runtime-check \
     --tag "$runtime_image" \
     "$project_directory"
 docker build \
     --platform "linux/$target_architecture" \
-    --file "$project_directory/packaging/Dockerfile" \
-    --target builder \
+    --file "$build_dockerfile" \
+    --target builder-audit \
     --tag "$builder_image" \
-    "$project_directory"
-docker build \
-    --platform "linux/$target_architecture" \
-    --file "$project_directory/packaging/Dockerfile" \
-    --target demo \
-    --tag "$demo_image" \
     "$project_directory"
 
 builder_manifest_id="$(docker image inspect --format '{{.Id}}' "$builder_image")"
 runtime_manifest_id="$(docker image inspect --format '{{.Id}}' "$runtime_image")"
-demo_manifest_id="$(docker image inspect --format '{{.Id}}' "$demo_image")"
 builder_container="$(
     docker create --platform "linux/$target_architecture" "$builder_manifest_id"
 )"
 runtime_container="$(
     docker create --platform "linux/$target_architecture" "$runtime_manifest_id"
 )"
+docker cp "$runtime_container:/work-transfer" \
+    "$temporary_directory/demo-context/work-transfer-ubuntu-amd64"
+
+docker build \
+    --platform "linux/$target_architecture" \
+    --build-context "work-transfer=$temporary_directory/demo-context" \
+    --file "$demo_dockerfile" \
+    --target demo \
+    --tag "$demo_image" \
+    "$project_directory"
+
+demo_manifest_id="$(docker image inspect --format '{{.Id}}' "$demo_image")"
 demo_container="$(
     docker create --platform "linux/$target_architecture" "$demo_manifest_id"
 )"
@@ -147,7 +167,20 @@ docker run --rm \
     --exit-code 1 \
     --format json \
     --output /reports/dockerfile-trivy.json \
-    /source/packaging/Dockerfile
+    /source/packaging/Dockerfile.build
+
+docker run --rm \
+    --volume "$temporary_directory/trivy-cache:/root/.cache/trivy" \
+    --volume "$project_directory:/source:ro" \
+    --volume "$temporary_report_directory:/reports" \
+    --volume "$project_directory/security:/policy:ro" \
+    "$scanner_digest" config \
+    --severity HIGH,CRITICAL \
+    --ignorefile /policy/trivy-demo-ignore.yaml \
+    --exit-code 1 \
+    --format json \
+    --output /reports/demo-dockerfile-trivy.json \
+    /source/packaging/demo/Dockerfile
 
 docker run --rm \
     --volume "$temporary_directory/trivy-cache:/root/.cache/trivy" \
@@ -173,6 +206,8 @@ docker run --rm \
 docker cp "$runtime_container:/work-transfer" "$output_directory/work-transfer"
 docker cp "$runtime_container:/builder-packages.tsv" \
     "$output_directory/builder-packages.tsv"
+docker cp "$builder_container:/builder-python-dependencies.txt" \
+    "$output_directory/builder-python-dependencies.txt"
 docker cp "$runtime_container:/runtime-packages.tsv" \
     "$output_directory/runtime-packages.tsv"
 docker cp "$runtime_container:/work-transfer-ldd.txt" \

@@ -14,22 +14,18 @@ trap 'rm -rf "$temporary_output"' EXIT
 
 mkdir -p "$project_directory/dist"
 
-"$project_directory/scripts/audit-dependencies.sh" "$temporary_output"
+docker build \
+    --pull \
+    --platform "linux/$target_architecture" \
+    --file "$project_directory/packaging/Dockerfile.build" \
+    --target artifact \
+    --output "type=local,dest=$temporary_output" \
+    "$project_directory"
 
 artifact="$project_directory/dist/work-transfer-ubuntu-$target_architecture"
-install -m 755 "$temporary_output/work-transfer" "$artifact"
-install -m 644 \
-    "$temporary_output/builder-packages.tsv" \
-    "$project_directory/dist/work-transfer-builder-packages.tsv"
-install -m 644 \
-    "$temporary_output/runtime-packages.tsv" \
-    "$project_directory/dist/work-transfer-runtime-packages.tsv"
-install -m 644 \
-    "$temporary_output/work-transfer-ldd.txt" \
-    "$project_directory/dist/work-transfer-ldd.txt"
-install -m 644 \
-    "$temporary_output/demo-packages.tsv" \
-    "$project_directory/dist/work-transfer-demo-packages.tsv"
+install -m 755 \
+    "$temporary_output/work-transfer-ubuntu-$target_architecture" \
+    "$artifact"
 
 if command -v sha256sum >/dev/null 2>&1; then
     artifact_sha256="$(sha256sum "$artifact" | awk '{print $1}')"

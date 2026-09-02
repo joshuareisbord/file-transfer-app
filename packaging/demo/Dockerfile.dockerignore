@@ -1,0 +1,7 @@
+**
+!packaging/
+!packaging/demo/
+!packaging/demo/desktop.sh
+!packaging/demo/keygen.sh
+!packaging/demo/side-entrypoint.sh
+!packaging/demo/work-transfer-mark.svg

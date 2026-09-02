@@ -14,11 +14,26 @@ receive A's SCP transfer. Both desktops are browser-accessible. On Windows,
 Docker Desktop must be using Linux containers; no local Python, SSH, or X
 server installation is required.
 
-From PowerShell, Command Prompt, or another terminal in the repository, run:
+The demo image consumes the executable produced by the separate builder
+Dockerfile. On Ubuntu, macOS, or WSL, build it first and then start the demo:
 
 ```bash
+./scripts/build-ubuntu.sh amd64
 docker compose --file compose.demo.yaml up --build
 ```
+
+From Windows PowerShell or Command Prompt, the equivalent builder command is:
+
+```text
+docker build --pull --platform linux/amd64 --file packaging/Dockerfile.build --target artifact --output type=local,dest=dist .
+docker compose --file compose.demo.yaml up --build
+```
+
+`packaging/Dockerfile.build` contains the compiler environment, while
+`packaging/demo/Dockerfile` contains only the interactive demo environment.
+The demo Dockerfile never installs a compiler or rebuilds the application.
+The named artifact context requires Docker Compose 2.17 or newer and BuildKit;
+current Docker Desktop releases include both.
 
 Open both passwordless desktops after the services are ready:
 
@@ -81,20 +96,39 @@ Build the Ubuntu amd64 executable:
 ./scripts/build-ubuntu.sh amd64
 ```
 
-The build compiles the C++20 application and packages it in a clean Ubuntu
-24.04 LTS stage where Python is absent. This demo branch does not compile or run
-the former CTest, GUI smoke, SCP loopback, or installer race test suites during
-the build. It still scans the exact builder, runtime, and demo images for
-High/Critical findings and emits CycloneDX SBOMs. The audited executable is
-written to `dist/work-transfer-ubuntu-amd64`; its checksum, resolved package
-manifests, linkage report, and scan evidence are written beside it under
-`dist/`.
+The normal build compiles only the C++20 application and exports it through a
+scratch artifact stage. It does not compile or run tests, build demo images,
+create a runtime-validation image, or run vulnerability scans. The executable
+is written to `dist/work-transfer-ubuntu-amd64`, with its SHA-256 checksum next
+to it.
+
+No project build step invokes Python. Ubuntu's supported `librsvg2-dev` package
+requires GLib introspection tooling, whose declared package dependencies include
+Python. Those tools exist only in the ephemeral compiler stage; removing them
+would break Ubuntu's supported dependency closure or require replacing the SVG
+renderer. The exported executable has no Python dependency. Python used by
+noVNC and websockify is isolated to the separate demo image.
+
+Run the dependency and container security audit separately when needed:
+
+```bash
+./scripts/audit-dependencies.sh
+```
+
+The optional audit builds the builder-audit, runtime-check, and demo images,
+scans them for High/Critical findings, emits CycloneDX SBOMs under
+`dist/security`, and places package, Python-dependency, and linkage evidence
+under `dist/audit`.
 
 The builder report retains narrowly scoped, expiring exceptions for Ubuntu's
 kernel-implementation and architecture-inapplicable CVE mappings on the
 header-only `linux-libc-dev` package; that kernel code is not linked or shipped.
 The policy is bound to the exact resolved package version and blocks every
-other High/Critical finding.
+other High/Critical finding. The demo Dockerfile audit separately documents its
+root-entrypoint exception: root initializes the key volumes, installs ephemeral
+SSH host keys, and starts the receiver's `sshd`; the graphical desktop runs as
+the unprivileged `demo` user and browser ports remain restricted to host
+loopback. The audit fails if an additional stage could inherit that exception.
 
 Copy the executable to an Ubuntu computer and verify it before launching:
 
@@ -113,13 +147,14 @@ To install the executable and its application-menu entry on Ubuntu:
 The executable contains the application code, FLTK GUI toolkit, JSON/TOML
 parsers, language catalogs, test definitions, update destinations, and theme.
 It uses the maintained librsvg/Cairo renderer already present in the standard
-Ubuntu 24.04 Desktop image. The build maps every linked library back to its
-Ubuntu package and requires that package to appear in Canonical's published
-24.04 Desktop AMD64 manifest. The target computer does not need Python, `pip`,
-`uv`, Docker, or sidecar application resources. It is a native Ubuntu desktop
-executable rather than a fully static Linux kernel binary, so it still uses the
-core libraries supplied by Ubuntu Desktop, a graphical display, and the system
-OpenSSH client used for SCP. This build targets Ubuntu 24.04 LTS on amd64.
+Ubuntu 24.04 Desktop image. The optional dependency audit maps every linked
+library back to its Ubuntu package and requires that package to appear in
+Canonical's published 24.04 Desktop AMD64 manifest. The target computer does
+not need Python, `pip`, `uv`, Docker, or sidecar application resources. It is a
+native Ubuntu desktop executable rather than a fully static Linux kernel
+binary, so it still uses the core libraries supplied by Ubuntu Desktop, a
+graphical display, and the system OpenSSH client used for SCP. This build
+targets Ubuntu 24.04 LTS on amd64.
 
 ## Prepare the two computers
 

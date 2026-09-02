@@ -1,0 +1,112 @@
+ARG UBUNTU_VERSION=24.04
+
+FROM ubuntu:${UBUNTU_VERSION} AS builder
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG TARGETARCH
+
+RUN test "${TARGETARCH}" = "amd64" \
+    && apt-get update \
+    && apt-get install --yes --no-install-recommends \
+    build-essential \
+    cmake \
+    libfltk1.3-dev \
+    librsvg2-dev \
+    libtomlplusplus-dev \
+    libxcursor-dev \
+    libxft-dev \
+    libxinerama-dev \
+    nlohmann-json3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /source
+
+COPY CMakeLists.txt ./CMakeLists.txt
+COPY cmake ./cmake
+COPY cpp ./cpp
+
+# These source resources are copied without transformation. CMake embeds their
+# exact bytes into the executable so the target machine needs no sidecar files.
+COPY work_transfer_app/localization/languages ./work_transfer_app/localization/languages
+COPY work_transfer_app/config/tests.toml ./work_transfer_app/config/tests.toml
+COPY work_transfer_app/config/updates.toml ./work_transfer_app/config/updates.toml
+COPY work_transfer_app/ui/theme.toml ./work_transfer_app/ui/theme.toml
+
+RUN cmake \
+    -S /source \
+    -B /build \
+    -DCMAKE_BUILD_TYPE=Release
+RUN cmake --build /build --parallel
+RUN cmake --install /build --prefix /staging --strip
+
+# The normal build stops here and exports only the executable. Stages below are
+# reachable exclusively from the optional dependency-audit script.
+FROM scratch AS artifact
+COPY --from=builder /staging/bin/work-transfer /work-transfer-ubuntu-amd64
+USER 65532:65532
+
+FROM builder AS builder-audit
+RUN dpkg-query --show --showformat='${binary:Package}\t${Version}\n' \
+        | sort > /builder-packages.tsv \
+    && apt-cache depends \
+        librsvg2-dev \
+        libglib2.0-dev \
+        libgirepository1.0-dev \
+        gobject-introspection \
+        > /builder-python-dependencies.txt
+
+FROM ubuntu:${UBUNTU_VERSION} AS runtime-check
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG TARGETARCH
+
+RUN test "${TARGETARCH}" = "amd64"
+RUN apt-get update && apt-get install --yes --no-install-recommends \
+    fonts-dejavu-core \
+    libcairo2 \
+    libfontconfig1 \
+    libjpeg-turbo8 \
+    libpng16-16t64 \
+    libx11-6 \
+    libxcursor1 \
+    libxext6 \
+    libxfixes3 \
+    libxft2 \
+    libxinerama1 \
+    libxrender1 \
+    librsvg2-2 \
+    openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /staging/bin/work-transfer /work-transfer
+COPY --from=builder-audit /builder-packages.tsv /builder-packages.tsv
+COPY packaging/compatibility/ubuntu-24.04-desktop-runtime-packages.txt \
+    /ubuntu-desktop-runtime-packages.txt
+
+# This optional audit stage proves the shipped binary has no Python runtime
+# dependency and maps its shared libraries to stock Ubuntu Desktop packages.
+RUN test "$(dpkg --print-architecture)" = "amd64"
+RUN ! command -v python3
+RUN ldd /work-transfer | tee /work-transfer-ldd.txt
+RUN ! grep -q "not found" /work-transfer-ldd.txt
+RUN : > /runtime-linked-packages.unsorted \
+    && awk '/=> \// {print $3} /^\t\/lib64/ {print $1}' \
+        /work-transfer-ldd.txt \
+        | while IFS= read -r library; do \
+            resolved="$(readlink -f "$library")"; \
+            owner="$(dpkg-query -S "$resolved" | head -n 1)"; \
+            test -n "$owner"; \
+            printf '%s\n' "${owner%%:*}" \
+                >> /runtime-linked-packages.unsorted; \
+          done \
+    && sort -u /runtime-linked-packages.unsorted \
+        > /runtime-linked-packages.txt \
+    && test -s /runtime-linked-packages.txt \
+    && while IFS= read -r package; do \
+         grep -Fqx "$package" /ubuntu-desktop-runtime-packages.txt || { \
+           echo "Runtime package is absent from Ubuntu Desktop: $package" >&2; \
+           exit 1; \
+         }; \
+       done < /runtime-linked-packages.txt
+RUN dpkg-query --show --showformat='${binary:Package}\t${Version}\n' \
+        | sort > /runtime-packages.tsv
