@@ -1,0 +1,51 @@
+# Required runtime package names present in Canonical's Ubuntu 24.04.4 Desktop
+# AMD64 manifest. Source manifest SHA-256:
+# 6f32a10ff9e2d2c348f4f69171115287f3c28522d3553dfe907abe25115f5fc6
+# https://releases.ubuntu.com/24.04/ubuntu-24.04.4-desktop-amd64.manifest
+libblkid1
+libbrotli1
+libbsd0
+libbz2-1.0
+libc6
+libcairo-gobject2
+libcairo2
+libdatrie1
+libexpat1
+libffi8
+libfontconfig1
+libfreetype6
+libfribidi0
+libgcc-s1
+libgdk-pixbuf-2.0-0
+libglib2.0-0t64
+libgraphite2-3
+libharfbuzz0b
+libicu74
+libjpeg-turbo8
+liblzma5
+libmd0
+libmount1
+libpango-1.0-0
+libpangocairo-1.0-0
+libpangoft2-1.0-0
+libpcre2-8-0
+libpixman-1-0
+libpng16-16t64
+librsvg2-2
+libselinux1
+libstdc++6
+libthai0
+libx11-6
+libxau6
+libxcb-render0
+libxcb-shm0
+libxcb1
+libxcursor1
+libxdmcp6
+libxext6
+libxfixes3
+libxft2
+libxinerama1
+libxml2
+libxrender1
+zlib1g

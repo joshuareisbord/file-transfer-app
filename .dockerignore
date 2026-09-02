@@ -1,8 +1,8 @@
 .git
 .playwright-cli
-.pytest_cache
-.ruff_cache
-.venv
+.codegraph
+.DS_Store
+build
 dist
 **/__pycache__
 *.pyc

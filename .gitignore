@@ -1,9 +1,7 @@
-.pytest_cache/
 .playwright-cli/
-.ruff_cache/
 .codegraph/
-.venv/
+.DS_Store
 **/__pycache__/
 *.pyc
-*.spec
+build/
 dist/

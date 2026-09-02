@@ -60,9 +60,13 @@ demonstration only and must not be exposed as a production service.
 
 ## Build the Ubuntu executable
 
-The build requires Git and a running Docker engine. It is pinned to the official
-Ubuntu 24.04 LTS image even when the build computer uses another Ubuntu release.
-Python and the application dependencies are installed only inside the builder.
+The build requires Git and a running Docker engine. It uses the official Ubuntu
+24.04 LTS image even when the build computer uses another Ubuntu release. Each
+release build refreshes that image and installs the current stable packages from
+Ubuntu's signed repositories without version-pinning the install commands. The
+C++ compiler and development headers stay inside the builder. The target is
+Ubuntu 24.04 LTS on amd64; an ARM build host uses Docker's `linux/amd64`
+emulation automatically.
 
 Clone this private repository with the GitHub CLI:
 
@@ -71,18 +75,25 @@ gh repo clone joshuareisbord/file-transfer-app
 cd file-transfer-app
 ```
 
-Build for the architecture used by the Ubuntu computers:
+Build the Ubuntu amd64 executable:
 
 ```bash
 ./scripts/build-ubuntu.sh amd64
-# or
-./scripts/build-ubuntu.sh arm64
 ```
 
-The build runs the automated tests, native GUI smoke test, and a real loopback
-SCP transfer inside Ubuntu. Before export, the one-file executable must also
-pass its self-check in a clean Ubuntu 24.04 LTS stage where Python is absent.
-The result is written to `dist/work-transfer-ubuntu-<architecture>`.
+The build compiles the C++20 application, runs CTest, exercises a native GUI
+smoke test and a real loopback SCP transfer inside Ubuntu, and validates the
+result in a clean Ubuntu 24.04 LTS stage where Python is absent. It also scans
+the exact builder, runtime, and demo images for High/Critical findings and emits
+CycloneDX SBOMs. The audited executable is written to
+`dist/work-transfer-ubuntu-amd64`; its checksum, resolved package manifests,
+linkage report, and scan evidence are written beside it under `dist/`.
+
+The builder report retains narrowly scoped, expiring exceptions for Ubuntu's
+kernel-implementation and architecture-inapplicable CVE mappings on the
+header-only `linux-libc-dev` package; that kernel code is not linked or shipped.
+The policy is bound to the exact resolved package version and blocks every
+other High/Critical finding.
 
 Copy the executable to an Ubuntu computer and verify it before launching:
 
@@ -98,11 +109,16 @@ To install the executable and its application-menu entry on Ubuntu:
 ./scripts/install-ubuntu.sh dist/work-transfer-ubuntu-amd64
 ```
 
-The executable contains its Python interpreter and Python packages. The target
-computer does not need Python, `pip`, `uv`, or Docker. It is an Ubuntu desktop
-application rather than a fully static Linux binary, so it still uses core
-Ubuntu runtime libraries, a graphical display, and the separately installed
-OpenSSH service used for SCP. This build targets Ubuntu 24.04 LTS or newer.
+The executable contains the application code, FLTK GUI toolkit, JSON/TOML
+parsers, language catalogs, test definitions, update destinations, and theme.
+It uses the maintained librsvg/Cairo renderer already present in the standard
+Ubuntu 24.04 Desktop image. The build maps every linked library back to its
+Ubuntu package and requires that package to appear in Canonical's published
+24.04 Desktop AMD64 manifest. The target computer does not need Python, `pip`,
+`uv`, Docker, or sidecar application resources. It is a native Ubuntu desktop
+executable rather than a fully static Linux kernel binary, so it still uses the
+core libraries supplied by Ubuntu Desktop, a graphical display, and the system
+OpenSSH client used for SCP. This build targets Ubuntu 24.04 LTS on amd64.
 
 ## Prepare the two computers
 
@@ -156,8 +172,9 @@ requires for strict host verification.
    then run **Test connection**.
 2. In **Library Update** or **SW Update**, select one file and start the
    transfer. The destination is fixed by `work_transfer_app/config/updates.toml`.
-   The app pins the open source file at Start so a later pathname replacement
-   cannot change the bytes sent.
+   At Start, the app opens the source without following symbolic links and
+   creates a private stable snapshot. Later pathname replacement or in-place
+   writes cannot change the bytes sent.
 3. Follow progress, throughput, and ETA in the persistent bottom tray. Abort
    cancels the active transfer and cleans its temporary remote file.
 4. Review successfully transferred files in the selected update page's
@@ -175,7 +192,7 @@ application starts:
 work-transfer --logo /absolute/path/to/company-logo.svg
 ```
 
-SVG, PNG, JPEG, GIF, and WebP files are accepted. The title remains visible
+SVG, PNG, JPEG, GIF, and BMP files are accepted. The title remains visible
 beside the logo. Logo input is limited to 5 MiB encoded, 4096 pixels per raster
 side, and 16 million decoded pixels; SVG active content and external resources
 are rejected.
@@ -193,20 +210,28 @@ All interface colors come from `work_transfer_app/ui/theme.toml`. Palette
 values are RGB triples, and semantic roles in the same file select which
 palette color is used for each surface, control, status, and interaction state.
 Edit the TOML file and rebuild the executable to change the color system; no
-Python changes are required.
+C++ changes are required.
 
 ## Development
 
-Use unversioned stable dependencies through `uv`:
+On Ubuntu 24.04, install the unversioned stable build dependencies and build
+natively with CMake:
 
 ```bash
-uv sync
-uv run pytest -q
-uv run ruff check .
-uv run basedpyright work_transfer_app tests
-uv run work-transfer
+sudo apt update
+sudo apt install build-essential cmake libcairo2-dev libfltk1.3-dev \
+  libfontconfig1-dev libjpeg-dev libpng-dev librsvg2-dev \
+  libtomlplusplus-dev pkg-config \
+  libxcursor-dev libxext-dev libxfixes-dev libxft-dev libxinerama-dev \
+  libxrender-dev nlohmann-json3-dev openssh-client openssh-server xauth \
+  xvfb zlib1g-dev
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+xvfb-run --auto-servernum ./packaging/smoke-test.sh ./build/work-transfer
 ```
 
-Feature code is grouped under `ui/`, `transfer/`, `localization/`, and
-`config/`. Helpers remain with their feature unless multiple packages consume
-them.
+The executable is at `build/work-transfer`. Feature code is grouped under
+`cpp/src` and public module headers under `cpp/include/work_transfer`. Source
+resources retain their existing paths under `work_transfer_app/`; CMake embeds
+their exact bytes into the binary during configuration.

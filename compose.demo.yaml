@@ -2,6 +2,7 @@ name: file-transfer-demo
 
 x-demo-computer: &demo-computer
   image: file-transfer-demo-computer:local
+  platform: linux/amd64
   build:
     context: .
     dockerfile: packaging/Dockerfile
@@ -19,6 +20,7 @@ x-demo-computer: &demo-computer
 services:
   demo-keygen:
     image: file-transfer-demo-keygen:local
+    platform: linux/amd64
     build:
       context: .
       dockerfile: packaging/Dockerfile
