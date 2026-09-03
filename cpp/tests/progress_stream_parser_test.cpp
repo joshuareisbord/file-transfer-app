@@ -22,6 +22,17 @@ int main() {
         "large-update.bin 20% 10GB 100MB/s 08:00 ETA\r";
     parser.feed(rounded_progress);
 
+    const auto initial_event_count = events.size();
+    std::this_thread::sleep_for(150ms);
+    parser.feed("large-update.bin 20% 10GB 101MB/s 07:59 ETA\r");
+    if (events.size() != initial_event_count + 1 ||
+        events.back().bytes_per_second.value_or(0.0) !=
+            101.0 * 1024.0 * 1024.0 ||
+        events.back().eta_seconds.value_or(0.0) != 479.0) {
+        std::cerr << "valid SCP progress update was discarded\n";
+        return 1;
+    }
+
     // This test exercises real elapsed-time behavior because the defect is the
     // production five-second liveness boundary itself. Valid OpenSSH records
     // continue arriving while its human-readable byte field remains rounded.

@@ -246,18 +246,13 @@ class ProgressStreamParser {
                     record_, filename_, total_)) {
                 const auto now = Clock::now();
                 last_activity_ = now;
-                const bool advanced =
-                    !last_progress_ || progress->transferred_bytes >
-                                           last_progress_->transferred_bytes;
-                if (advanced) {
-                    progress->is_stalled = false;
-                    last_progress_ = *progress;
-                    const bool complete = progress->transferred_bytes >= total_;
-                    if (complete || now - last_emit_ >=
-                                        kMinimumProgressEmitInterval) {
-                        last_emit_ = now;
-                        emit(*progress);
-                    }
+                progress->is_stalled = false;
+                last_progress_ = *progress;
+                const bool complete = progress->transferred_bytes >= total_;
+                if (complete || now - last_emit_ >=
+                                    kMinimumProgressEmitInterval) {
+                    last_emit_ = now;
+                    emit(*progress);
                 }
             }
         }
