@@ -215,9 +215,12 @@ The receiver's SSH service must allow password authentication.
    environment variables, or temporary files.
 2. In **Library Update** or **SW Update**, select one file and start the
    transfer. Each tab uses its corresponding destination from the tested
-   Connection settings. At Start, the app opens the source without following
-   symbolic links and creates a private stable snapshot. Later pathname
-   replacement or in-place writes cannot change the bytes sent.
+   Connection settings. At Start, the app opens and pins the source without
+   following symbolic links, and SCP reads that inherited descriptor directly.
+   The source metadata is rechecked before the remote staging file is committed;
+   a concurrent source change fails the transfer and removes the staging file.
+   No second full-size local copy is required. The receiving filesystem must
+   still have enough free space for the transferred file.
 3. Follow progress, throughput, and ETA in the persistent bottom tray. Abort
    cancels the active transfer and cleans its temporary remote file.
 4. Review successfully transferred files in the selected update page's

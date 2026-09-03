@@ -417,11 +417,6 @@ PreparedSource::~PreparedSource() = default;
 
 namespace {
 
-struct SnapshotResult {
-    FileDescriptor descriptor;
-    bool cancelled{false};
-};
-
 [[nodiscard]] bool same_source_metadata(const struct stat& left,
                                         const struct stat& right) noexcept {
     return left.st_dev == right.st_dev && left.st_ino == right.st_ino &&
@@ -430,76 +425,6 @@ struct SnapshotResult {
            left.st_mtim.tv_nsec == right.st_mtim.tv_nsec &&
            left.st_ctim.tv_sec == right.st_ctim.tv_sec &&
            left.st_ctim.tv_nsec == right.st_ctim.tv_nsec;
-}
-
-[[nodiscard]] SnapshotResult snapshot_source(
-    int source_descriptor, const struct stat& expected,
-    const std::atomic_bool& cancellation_requested) {
-    struct stat before {};
-    if (::fstat(source_descriptor, &before) != 0 ||
-        !same_source_metadata(before, expected)) {
-        return {};
-    }
-
-    std::string pattern = "/tmp/work-transfer-source-XXXXXX";
-    pattern.push_back('\0');
-    FileDescriptor writable(::mkstemp(pattern.data()));
-    if (writable.value < 0) {
-        return {};
-    }
-    static_cast<void>(::unlink(pattern.data()));
-    if (::fcntl(writable.value, F_SETFD, FD_CLOEXEC) != 0) {
-        return {};
-    }
-
-    std::array<char, 64U * 1024U> buffer{};
-    off_t offset = 0;
-    while (offset < expected.st_size) {
-        if (cancellation_requested.load()) {
-            return {.descriptor = {}, .cancelled = true};
-        }
-        const off_t remaining = expected.st_size - offset;
-        const auto requested = static_cast<std::size_t>(
-            std::min<off_t>(static_cast<off_t>(buffer.size()), remaining));
-        const auto count =
-            ::pread(source_descriptor, buffer.data(), requested, offset);
-        if (count < 0 && errno == EINTR) {
-            continue;
-        }
-        if (count <= 0) {
-            return {};
-        }
-        std::size_t written = 0;
-        const auto count_size = static_cast<std::size_t>(count);
-        while (written < count_size) {
-            const auto result = ::write(writable.value, buffer.data() + written,
-                                        count_size - written);
-            if (result < 0 && errno == EINTR) {
-                continue;
-            }
-            if (result <= 0) {
-                return {};
-            }
-            written += static_cast<std::size_t>(result);
-        }
-        offset += count;
-    }
-
-    struct stat after {};
-    if (::fstat(source_descriptor, &after) != 0 ||
-        !same_source_metadata(after, expected) ||
-        ::fchmod(writable.value, S_IRUSR) != 0) {
-        return {};
-    }
-    const std::string descriptor_path =
-        "/proc/self/fd/" + std::to_string(writable.value);
-    FileDescriptor readonly(
-        ::open(descriptor_path.c_str(), O_RDONLY | O_CLOEXEC));
-    if (readonly.value < 0) {
-        return {};
-    }
-    writable = FileDescriptor{};
-    return {.descriptor = std::move(readonly), .cancelled = false};
 }
 
 }  // namespace
@@ -620,14 +545,10 @@ class ScpTransport::Impl {
                     final_path};
         }
 
-        auto snapshot = snapshot_source(source_descriptor, source_metadata,
-                                        cancellation_requested_);
-        if (snapshot.cancelled || cancellation_requested_.load()) {
-            return {TransferState::aborted, {}, TransferErrorKind::none,
-                    final_path};
-        }
-        if (snapshot.descriptor.value < 0) {
-            return {TransferState::failed, "source_file_missing",
+        struct stat before_upload {};
+        if (::fstat(source_descriptor, &before_upload) != 0 ||
+            !same_source_metadata(before_upload, source_metadata)) {
+            return {TransferState::failed, "source_changed",
                     TransferErrorKind::file, final_path};
         }
 
@@ -654,7 +575,7 @@ class ScpTransport::Impl {
              .password = config.password,
              .use_pty = true,
              .cancellable = true,
-             .inherited_source = snapshot.descriptor.value,
+             .inherited_source = source_descriptor,
              .timeout = std::nullopt},
             active_process_, &cancellation_requested_,
             [&parser](std::string_view output) { parser.feed(output); },
@@ -670,6 +591,14 @@ class ScpTransport::Impl {
             const auto kind = classify_ssh_error(uploaded.diagnostic, true);
             return {TransferState::failed, generic_failure_message(kind, true), kind,
                     final_path};
+        }
+
+        struct stat after_upload {};
+        if (::fstat(source_descriptor, &after_upload) != 0 ||
+            !same_source_metadata(after_upload, source_metadata)) {
+            cleanup(config, staging);
+            return {TransferState::failed, "source_changed",
+                    TransferErrorKind::file, final_path};
         }
 
         if (cancellation_requested_.load()) {

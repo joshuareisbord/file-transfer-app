@@ -125,7 +125,7 @@ class ScpTransport final {
         const ConnectionConfig& config, const TransferRequest& request,
         std::stop_token stop, ProgressCallback on_progress = {});
 
-    /** Transfer an already pinned source through a private stable snapshot. */
+    /** Transfer an already pinned source and reject concurrent source changes. */
     [[nodiscard]] TransferResult transfer(
         const ConnectionConfig& config,
         const std::shared_ptr<PreparedSource>& source,
