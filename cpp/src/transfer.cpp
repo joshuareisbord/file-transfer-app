@@ -226,7 +226,7 @@ class ProgressStreamParser {
             return;
         }
         const auto now = Clock::now();
-        if (now - last_advanced_ < kStallThreshold ||
+        if (now - last_activity_ < kStallThreshold ||
             now - last_stall_emit_ < kStallEmitInterval) {
             return;
         }
@@ -245,13 +245,13 @@ class ProgressStreamParser {
             if (auto progress = detail::parse_scp_progress_line(
                     record_, filename_, total_)) {
                 const auto now = Clock::now();
+                last_activity_ = now;
                 const bool advanced =
                     !last_progress_ || progress->transferred_bytes >
                                            last_progress_->transferred_bytes;
                 if (advanced) {
                     progress->is_stalled = false;
                     last_progress_ = *progress;
-                    last_advanced_ = now;
                     const bool complete = progress->transferred_bytes >= total_;
                     if (complete || now - last_emit_ >=
                                         kMinimumProgressEmitInterval) {
@@ -281,7 +281,7 @@ class ProgressStreamParser {
     std::string record_;
     bool dropping_{false};
     std::optional<TransferProgress> last_progress_;
-    Clock::time_point last_advanced_{Clock::now()};
+    Clock::time_point last_activity_{Clock::now()};
     Clock::time_point last_emit_{Clock::now() - kMinimumProgressEmitInterval};
     Clock::time_point last_stall_emit_{Clock::now() - kStallEmitInterval};
 };
